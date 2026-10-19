@@ -263,7 +263,7 @@ export function NewSession({ relay, initialCwd, initialAgent, projectOnly = fals
           {cwd && !browsing && <div className="truncate rounded-lg bg-zinc-100 px-3 py-2 font-mono text-sm dark:bg-zinc-800" title={cwd}>📁 {shortPath(cwd)}</div>}
           {cwd && !browsing && <CreateFolder key={cwd} parent={cwd} disabled={busy} onPick={pickFolder} onBusyChange={onFolderBusy} />}
           {!browsing && recent.length > 0 && (
-            <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4 sm:mx-0 sm:flex-wrap sm:px-0" aria-label="最近项目">
+            <div className="flex flex-wrap gap-1.5" aria-label="最近项目">
               {recent.map((path) => (
                 <button
                   key={path}

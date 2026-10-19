@@ -91,7 +91,7 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
           </button>
         )}
         {relay.agents.length > 1 && (
-          <div className="no-scrollbar -mx-3 flex gap-1 overflow-x-auto px-3 text-xs" role="group" aria-label="按 IDE 筛选">
+          <div className="flex flex-wrap gap-1 text-xs" role="group" aria-label="按 IDE 筛选">
             {(["all", ...relay.agents.map((entry) => entry.agent)] as Filter[]).map((value) => {
               const availability = value === "all" ? null : relay.agents.find((agent) => agent.agent === value);
               return (
