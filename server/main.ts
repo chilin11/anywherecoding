@@ -143,8 +143,8 @@ function openEvents(request: IncomingMessage, response: ServerResponse): void {
     response.write(`data: ${JSON.stringify(event.type === "item" ? { ...event, item: media.item(event.item, sessionCwds.get(event.sessionId)) } : event)}\n\n`);
   };
   const unsubscribe = hub.subscribe(send);
-  // Keeps cloudflared and mobile networks from idling the stream out.
-  const ping = setInterval(() => response.write(": ping\n\n"), 20_000);
+  // Keeps cloudflared and mobile networks from idling the stream out; the client also uses it to detect dead streams.
+  const ping = setInterval(() => response.write("event: ping\ndata: {}\n\n"), 20_000);
   request.on("close", () => {
     clearInterval(ping);
     unsubscribe();

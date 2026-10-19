@@ -64,17 +64,95 @@ export const api = {
     call<DirListing>("/api/fs", { method: "POST", body: { parent, name } }),
 };
 
-/** EventSource reconnects by itself; `onOpen` fires on every (re)connect so callers can resync. */
+/** The server pings every 20s; a stream quiet for longer is dead even if it still looks open. */
+const STALE_MS = 50_000;
+/** Returning after this long in the background resubscribes, resyncing anything a frozen tab missed. */
+const AWAY_MS = 30_000;
+
+/**
+ * Live event stream that survives background tabs, sleep and proxies: `onOpen` fires on every
+ * (re)connect so callers can resync.
+ */
 export function subscribe(onEvent: (event: RelayEvent) => void, onOpen: () => void, onDown: () => void): () => void {
-  const source = new EventSource("/api/events", { withCredentials: true });
-  source.onopen = onOpen;
-  source.onerror = onDown;
-  source.onmessage = (message) => {
-    try {
-      onEvent(JSON.parse(message.data));
-    } catch {
-      // ignore malformed frames
-    }
+  let source: EventSource | null = null;
+  let last = Date.now();
+  let hiddenAt = document.hidden ? Date.now() : 0;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  let backoff = 1000;
+  let closed = false;
+
+  const connect = () => {
+    clearTimeout(retry);
+    source?.close();
+    source = null;
+    if (closed) return;
+    last = Date.now();
+    const current = new EventSource("/api/events", { withCredentials: true });
+    source = current;
+    const alive = () => {
+      if (source !== current) return false;
+      last = Date.now();
+      return true;
+    };
+    current.onopen = () => {
+      if (!alive()) return;
+      backoff = 1000;
+      onOpen();
+    };
+    current.addEventListener("ping", alive);
+    current.onmessage = (message) => {
+      if (!alive()) return;
+      try {
+        onEvent(JSON.parse(message.data));
+      } catch {
+        // ignore malformed frames
+      }
+    };
+    current.onerror = () => {
+      if (source !== current) return;
+      onDown();
+      // The browser retries by itself, except after a non-stream response (proxy error, expired login).
+      if (current.readyState !== EventSource.CLOSED) return;
+      retry = setTimeout(() => {
+        api.me().then(connect, (error) => (error instanceof ApiError && error.status === 401 ? location.reload() : connect()));
+      }, backoff);
+      backoff = Math.min(backoff * 2, 30_000);
+    };
   };
-  return () => source.close();
+
+  const wake = (force: boolean) => {
+    if (closed) return;
+    if (force || !source || source.readyState === EventSource.CLOSED || Date.now() - last > STALE_MS) connect();
+  };
+  const onVisibility = () => {
+    if (document.hidden) {
+      hiddenAt = Date.now();
+      return;
+    }
+    const away = hiddenAt > 0 && Date.now() - hiddenAt > AWAY_MS;
+    hiddenAt = 0;
+    wake(away);
+  };
+  const onShow = (event: PageTransitionEvent) => wake(event.persisted);
+  const onResume = () => wake(true);
+  const watchdog = setInterval(() => {
+    if (!document.hidden) wake(false);
+  }, 10_000);
+  document.addEventListener("visibilitychange", onVisibility);
+  document.addEventListener("resume", onResume);
+  addEventListener("pageshow", onShow);
+  addEventListener("online", onResume);
+  connect();
+
+  return () => {
+    closed = true;
+    clearTimeout(retry);
+    clearInterval(watchdog);
+    document.removeEventListener("visibilitychange", onVisibility);
+    document.removeEventListener("resume", onResume);
+    removeEventListener("pageshow", onShow);
+    removeEventListener("online", onResume);
+    source?.close();
+    source = null;
+  };
 }
