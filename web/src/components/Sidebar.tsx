@@ -13,6 +13,8 @@ type Props = {
   onNew: (cwd?: string, agent?: Agent) => void;
   onLogout: () => void;
   onConnections: () => void;
+  /** Close the drawer on phones, collapse the sidebar on desktop. */
+  onHide?: () => void;
 };
 
 function StatusDot({ status }: { status: string }) {
@@ -21,7 +23,7 @@ function StatusDot({ status }: { status: string }) {
   return null;
 }
 
-export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnections }: Props) {
+export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnections, onHide }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -59,6 +61,9 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
         <button onClick={onLogout} className="ml-auto min-h-8 rounded-md px-2 text-xs text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800">
           退出
         </button>
+        {onHide && <button onClick={onHide} aria-label="收起侧栏" title="收起侧栏" className="flex size-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800">
+          <svg aria-hidden="true" viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" /><path d="M6 3v10" /><path d="M10.5 6.5 9 8l1.5 1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </button>}
       </div>
       <ActivitySummary relay={relay} />
 

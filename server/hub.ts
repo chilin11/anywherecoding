@@ -124,6 +124,10 @@ export class Hub {
     return this.approvals.get(id);
   }
 
+  pendingApprovals(): Approval[] {
+    return [...this.approvals.values()];
+  }
+
   /** Drop every approval an adapter no longer reports (e.g. its process exited). */
   retainApprovals(agent: Agent, keep: (approval: Approval) => boolean): void {
     for (const approval of [...this.approvals.values()]) {

@@ -15,7 +15,7 @@ const DESKTOP_HINT: Record<string, string> = {
   claude: "Claude 桌面版里已打开的同一会话不会实时刷新，回到电脑后重新打开即可。避免两边同时发消息。",
 };
 
-export function Chat({ relay, session, onMenu, onNew }: { relay: Relay; session: SessionSummary; onMenu: () => void; onNew: (cwd?: string, agent?: Agent) => void }) {
+export function Chat({ relay, session, onMenu, menuAlways, onNew }: { relay: Relay; session: SessionSummary; onMenu: () => void; menuAlways?: boolean; onNew: (cwd?: string, agent?: Agent) => void }) {
   const thread = relay.threads[session.id];
   const status = relay.statusOf(session);
   const running = status === "running" || status === "approval";
@@ -114,7 +114,7 @@ export function Chat({ relay, session, onMenu, onNew }: { relay: Relay; session:
   return (
     <div className="flex h-full min-w-0 flex-col">
       <header className="flex items-center gap-1.5 border-b border-zinc-200 bg-white/90 px-2 pt-[max(env(safe-area-inset-top),0.375rem)] pb-1.5 backdrop-blur sm:gap-2 sm:px-3 dark:border-zinc-800 dark:bg-zinc-900/90">
-        <button onClick={onMenu} className="flex size-10 shrink-0 items-center justify-center rounded-lg text-xl leading-none hover:bg-zinc-100 md:hidden dark:hover:bg-zinc-800" aria-label="菜单">
+        <button onClick={onMenu} className={cx("flex size-10 shrink-0 items-center justify-center rounded-lg text-xl leading-none hover:bg-zinc-100 dark:hover:bg-zinc-800", !menuAlways && "md:hidden")} aria-label="菜单" title="会话列表">
           ☰
         </button>
         <div className="min-w-0 flex-1">

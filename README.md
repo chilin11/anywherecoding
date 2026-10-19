@@ -18,6 +18,8 @@
 - 原生图片内容、工具图片结果和 Markdown 图片预览。
 - 原生错误详情、重试提示、失败工具自动展开；发送失败保留草稿。
 - 手机布局、运行/待审批图标，以及浏览器标题中的活动数量。
+- 电脑端侧栏可拖动调宽（双击分隔线恢复默认，拖到最左收起，☰ 恢复），宽度保存在浏览器中。
+- macOS 状态栏图标：显示运行/待审批数量，点选进行中的会话直接打开网页。
 
 ## 快速开始
 
@@ -116,6 +118,23 @@ node scripts/service.mjs uninstall
 卸载保留配置和原生会话。服务重启会停止它拥有的 Codex、Claude Code 和 Pi CLI 进程，请在任务完成后操作。移除 PI-Desktop 连接只断开网页控制，不停止桌面任务。
 
 macOS 后台 Node 访问 Downloads 等受保护目录需要单独授权；终端能读取不代表 LaunchAgent 已获授权。系统提示访问文件夹时选择允许，或在“隐私与安全性 → 文件与文件夹”中启用。图片读取超时会显示不可用，其他网页请求继续响应。
+
+## macOS 状态栏图标
+
+需要 Xcode Command Line Tools（`swiftc`）。构建、ad-hoc 签名并安装到 `~/Applications/AnywhereCodingBar.app`，同时设为登录自启：
+
+```sh
+node scripts/menubar.mjs install
+node scripts/menubar.mjs status
+node scripts/menubar.mjs uninstall   # 移除应用和自启，服务与配置不受影响
+```
+
+图标每 3 秒读取一次 `GET /api/status`（使用 `~/.anywherecoding/config.json` 中的令牌，令牌不会写入应用包）：
+
+- `</>`：服务正常、无活动；`◎ N`：N 个会话运行中；橙色 `✋ N!`：N 个会话待审批；灰色闪电：服务未连接或令牌无效。
+- 菜单列出进行中的会话（点选打开对应网页会话），以及连接状态、错误、打开网页、复制登录令牌、重启服务。
+
+`/api/status` 需要登录 Cookie 或 `Authorization: Bearer <token>`，返回运行/待审批计数、最多 20 个活动会话、连接可用性和读取错误。
 
 ## 远程访问
 

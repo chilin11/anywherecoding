@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Add a native macOS menu bar companion (`scripts/menubar.mjs install`) showing running/approval counts and active sessions.
+- Add authenticated `GET /api/status` activity snapshot.
+- Make the desktop sidebar resizable and collapsible, with a persisted width and keyboard support.
+- Keep live updates working after background tabs resume; compact mobile chat and composer layout; wrap filter chips.
+
 ## v0.1.0
 
 Initial release of AnywhereCoding, a mobile-friendly web interface for local AI coding sessions.

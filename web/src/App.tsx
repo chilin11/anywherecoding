@@ -9,6 +9,7 @@ import { activityCounts } from "./components/SessionStatus.tsx";
 import { ConnectionsPanel } from "./components/Connections.tsx";
 import { useRelay } from "./store.ts";
 import { AGENT_META, cx } from "./util.ts";
+import { SIDEBAR_MIN, useSidebarWidth } from "./useSidebarWidth.ts";
 
 function currentRoute(): string | null {
   const match = location.hash.match(/^#\/s\/(.+)$/);
@@ -24,6 +25,7 @@ export function App() {
   // Sessions we just created, shown until the list catches up.
   const [pending, setPending] = useState<Record<string, SessionSummary>>({});
   const relay = useRelay(authed === true);
+  const sidebar = useSidebarWidth();
 
   useEffect(() => {
     api.me().then(() => setAuthed(true)).catch((error) => setAuthed(error instanceof ApiError && error.status === 401 ? false : true));
@@ -95,21 +97,44 @@ export function App() {
     void relay.refreshSessions();
   }
 
+  const sidebarHidden = !narrow && sidebar.collapsed;
+  const showMenu = () => (narrow ? setDrawer(true) : sidebar.setCollapsed(false));
   const menuButton = (
-    <button onClick={() => setDrawer(true)} className="flex size-10 items-center justify-center rounded-lg text-xl leading-none hover:bg-zinc-100 dark:hover:bg-zinc-800" aria-label="菜单">☰</button>
+    <button onClick={showMenu} className={cx("flex size-10 items-center justify-center rounded-lg text-xl leading-none hover:bg-zinc-100 dark:hover:bg-zinc-800", !sidebarHidden && "md:hidden")} aria-label="菜单" title={narrow ? "会话列表" : "显示侧栏"}>☰</button>
   );
 
   return (
     <div className="flex h-dvh overflow-hidden">
       <aside
         aria-label="会话列表"
+        hidden={sidebarHidden}
+        style={narrow ? undefined : { width: sidebar.width }}
         className={cx(
-          "fixed inset-y-0 left-0 z-30 w-[86vw] max-w-80 border-r border-zinc-200 bg-white shadow-xl transition-transform duration-200 md:static md:w-72 md:translate-x-0 md:shadow-none lg:w-80 dark:border-zinc-800 dark:bg-zinc-900",
+          "fixed inset-y-0 left-0 z-30 w-[86vw] max-w-80 shrink-0 border-r border-zinc-200 bg-white shadow-xl md:static md:max-w-none md:translate-x-0 md:shadow-none dark:border-zinc-800 dark:bg-zinc-900",
+          !sidebar.dragging && "transition-transform duration-200",
           drawer ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <Sidebar relay={relay} activeId={activeId} onOpen={open} onNew={onNew} onConnections={() => { setCreating(null); setManagingConnections(true); setDrawer(false); }} onLogout={() => void logout()} />
+        <Sidebar relay={relay} activeId={activeId} onOpen={open} onNew={onNew} onConnections={() => { setCreating(null); setManagingConnections(true); setDrawer(false); }} onLogout={() => void logout()} onHide={narrow ? () => setDrawer(false) : () => sidebar.setCollapsed(true)} />
       </aside>
+      {!narrow && !sidebarHidden && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整侧栏宽度"
+          aria-valuemin={SIDEBAR_MIN}
+          aria-valuemax={sidebar.max}
+          aria-valuenow={sidebar.width}
+          tabIndex={0}
+          title="拖动调整宽度，双击恢复默认，拖到最左隐藏"
+          {...sidebar.handle}
+          className={cx(
+            "group relative z-10 -mx-1 w-2 shrink-0 cursor-col-resize touch-none outline-none",
+            "after:absolute after:inset-y-0 after:left-1/2 after:w-0.5 after:-translate-x-1/2 after:transition-colors",
+            sidebar.dragging ? "after:bg-blue-500" : "after:bg-transparent hover:after:bg-blue-400/70 focus-visible:after:bg-blue-500",
+          )}
+        />
+      )}
       {drawer && <div className="fixed inset-0 z-20 bg-black/30 md:hidden" onClick={() => setDrawer(false)} aria-hidden="true" />}
 
       <main className="min-w-0 flex-1" inert={drawer && narrow ? true : undefined}>
@@ -119,7 +144,7 @@ export function App() {
             <div className="min-h-0 flex-1"><NewSession key={`${creating.cwd}:${creating.agent}`} relay={relay} initialCwd={creating.cwd} initialAgent={creating.agent} projectOnly onClose={() => setCreating(null)} onCreated={created} /></div>
           </div>
         ) : active ? (
-          <Chat key={active.id} relay={relay} session={active} onMenu={() => setDrawer(true)} onNew={onNew} />
+          <Chat key={active.id} relay={relay} session={active} onMenu={showMenu} menuAlways={sidebarHidden} onNew={onNew} />
         ) : (
           <div className="flex h-full flex-col">
             <header className="flex items-center px-2 pt-[max(env(safe-area-inset-top),0.375rem)] pb-1 md:hidden">

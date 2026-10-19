@@ -15,6 +15,9 @@ import { Hub, splitKey, type Adapter } from "./hub.ts";
 import type { Agent, ApprovalAnswer, RelayEvent, SessionSummary } from "./types.ts";
 import { parseConfigPatch } from "./session-config.ts";
 import { Media } from "./media.ts";
+import { summarize } from "./status.ts";
+
+const VERSION: string = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8")).version;
 
 const config = loadConfig();
 const auth = new Auth(config.token, config.cookieSecret);
@@ -204,6 +207,11 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   }
   if (path === "/api/me" && method === "GET") {
     sendJson(response, 200, { ok: true, agents: hub.availability(), roots: config.roots });
+    return;
+  }
+  if (path === "/api/status" && method === "GET") {
+    const { sessions, errors } = await listAll();
+    sendJson(response, 200, summarize(sessions, hub.pendingApprovals(), hub.availability(), errors, VERSION));
     return;
   }
   if (path === "/api/events" && method === "GET") {
