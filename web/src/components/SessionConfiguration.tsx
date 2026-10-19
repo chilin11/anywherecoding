@@ -62,6 +62,22 @@ function ContextUsage({ context }: { context: NonNullable<SessionConfig["context
   );
 }
 
+/** One-line description of the effective choices, for the collapsed settings button. */
+export function configSummary(config: SessionConfig): { text: string; context: string | null } {
+  const model = config.models.find((option) => option.value === config.model);
+  const thinking = model?.thinkingLevels.find((option) => option.value === config.thinking);
+  const permission = config.permissionModes.find((option) => option.value === config.permissionMode);
+  const parts = [
+    config.model == null ? "默认模型" : model?.label ?? config.model,
+    config.thinking == null ? null : thinking?.label ?? config.thinking,
+    config.permissionModes.length === 0 ? null : config.permissionMode == null ? "默认权限" : permission?.label ?? config.permissionMode,
+  ].filter(Boolean);
+  const used = config.context?.usedTokens;
+  const window = config.context?.windowTokens;
+  const context = used != null && window != null && used >= 0 && window > 0 ? `${used / window * 100 < 1 && used > 0 ? "<1" : Math.round(used / window * 100)}%` : null;
+  return { text: parts.join(" · "), context };
+}
+
 export function SessionConfiguration({ config, disabled, onChange, showContext }: Props) {
   const model = config.models.find((option) => option.value === config.model);
   const levels = model?.thinkingLevels ?? [];

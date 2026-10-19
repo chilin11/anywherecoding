@@ -62,7 +62,7 @@ function ToolView({ item }: { item: Item }) {
 }
 function Reasoning({ item }: { item: Item }) {
   const [open, setOpen] = useState(false);
-  return <div className="text-[13px] text-zinc-500"><button onClick={() => setOpen(!open)} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800/70"><span>{open ? "▾" : "▸"}</span> 思考过程</button>{open && <div className="mt-1 ml-5 border-l-2 border-zinc-200 pl-3 whitespace-pre-wrap dark:border-zinc-700">{item.text}</div>}</div>;
+  return <div className="text-[13px] text-zinc-500"><button onClick={() => setOpen(!open)} aria-expanded={open} className="flex min-h-8 items-center gap-1 rounded-md px-2 hover:bg-zinc-100 dark:hover:bg-zinc-800/70"><span>{open ? "▾" : "▸"}</span> 思考过程</button>{open && <div className="mt-1 ml-5 border-l-2 border-zinc-200 pl-3 whitespace-pre-wrap dark:border-zinc-700">{item.text}</div>}</div>;
 }
 export const ItemView = memo(function ItemView({ item }: { item: Item }) {
   switch (item.kind) {

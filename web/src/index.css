@@ -81,6 +81,28 @@ body {
   scrollbar-width: thin;
 }
 
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Phones: tighter prose, and wide code/tables scroll inside their own box. */
+@media (max-width: 639px) {
+  .md {
+    @apply text-[15px] leading-6.5;
+  }
+  .md pre {
+    @apply -mx-1 text-xs;
+  }
+}
+
+button,
+summary {
+  touch-action: manipulation;
+}
+
 @keyframes blink {
   50% {
     opacity: 0;

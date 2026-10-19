@@ -39,6 +39,21 @@ export function App() {
     }
   }, [authed]);
 
+  // The drawer only overlays content on phones; track that to make the page behind it inert.
+  const [narrow, setNarrow] = useState(() => matchMedia("(max-width: 767px)").matches);
+  useEffect(() => {
+    const query = matchMedia("(max-width: 767px)");
+    const update = () => { setNarrow(query.matches); if (!query.matches) setDrawer(false); };
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  useEffect(() => {
+    if (!drawer) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setDrawer(false); };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [drawer]);
+
   const open = useCallback((id: string) => {
     location.hash = `#/s/${encodeURIComponent(id)}`;
     setDrawer(false);
@@ -80,35 +95,44 @@ export function App() {
     void relay.refreshSessions();
   }
 
+  const menuButton = (
+    <button onClick={() => setDrawer(true)} className="flex size-10 items-center justify-center rounded-lg text-xl leading-none hover:bg-zinc-100 dark:hover:bg-zinc-800" aria-label="菜单">☰</button>
+  );
+
   return (
     <div className="flex h-dvh overflow-hidden">
       <aside
+        aria-label="会话列表"
         className={cx(
-          "fixed inset-y-0 left-0 z-30 w-[85vw] max-w-80 border-r border-zinc-200 bg-white transition-transform md:static md:w-72 md:translate-x-0 dark:border-zinc-800 dark:bg-zinc-900",
+          "fixed inset-y-0 left-0 z-30 w-[86vw] max-w-80 border-r border-zinc-200 bg-white shadow-xl transition-transform duration-200 md:static md:w-72 md:translate-x-0 md:shadow-none lg:w-80 dark:border-zinc-800 dark:bg-zinc-900",
           drawer ? "translate-x-0" : "-translate-x-full",
         )}
       >
         <Sidebar relay={relay} activeId={activeId} onOpen={open} onNew={onNew} onConnections={() => { setCreating(null); setManagingConnections(true); setDrawer(false); }} onLogout={() => void logout()} />
       </aside>
-      {drawer && <div className="fixed inset-0 z-20 bg-black/30 md:hidden" onClick={() => setDrawer(false)} />}
+      {drawer && <div className="fixed inset-0 z-20 bg-black/30 md:hidden" onClick={() => setDrawer(false)} aria-hidden="true" />}
 
-      <main className="min-w-0 flex-1">
+      <main className="min-w-0 flex-1" inert={drawer && narrow ? true : undefined}>
         {creating?.projectOnly ? (
           <div className="flex h-full flex-col">
-            <header className="px-3 pt-[max(env(safe-area-inset-top),0.5rem)] md:hidden"><button onClick={() => setDrawer(true)} className="rounded-md p-1.5 text-xl leading-none" aria-label="菜单">☰</button></header>
+            <header className="flex items-center px-2 pt-[max(env(safe-area-inset-top),0.375rem)] md:hidden">{menuButton}</header>
             <div className="min-h-0 flex-1"><NewSession key={`${creating.cwd}:${creating.agent}`} relay={relay} initialCwd={creating.cwd} initialAgent={creating.agent} projectOnly onClose={() => setCreating(null)} onCreated={created} /></div>
           </div>
         ) : active ? (
           <Chat key={active.id} relay={relay} session={active} onMenu={() => setDrawer(true)} onNew={onNew} />
         ) : (
           <div className="flex h-full flex-col">
-            <header className="flex items-center px-3 pt-[max(env(safe-area-inset-top),0.5rem)] pb-2 md:hidden">
-              <button onClick={() => setDrawer(true)} className="rounded-md p-1.5 text-xl leading-none" aria-label="菜单">☰</button>
+            <header className="flex items-center px-2 pt-[max(env(safe-area-inset-top),0.375rem)] pb-1 md:hidden">
+              {menuButton}
+              <span className="ml-1 font-semibold">AnywhereCoding</span>
             </header>
             <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
               <img src="/icon.svg" alt="" className="size-12 opacity-80" />
-              <p className="text-zinc-500">{relay.agents.length ? "从左侧选一个会话继续，或新建一个" : "添加本机 IDE 连接，查看并继续你的会话"}</p>
-              <div className="flex flex-wrap gap-3 text-xs text-zinc-500">
+              <div className="space-y-1">
+                <p className="font-medium">{relay.agents.length ? "继续你的编程会话" : "连接本机 IDE"}</p>
+                <p className="text-sm text-zinc-500">{relay.agents.length ? "从会话列表选一个继续，或新建一个" : "添加本机 IDE 连接，查看并继续你的会话"}</p>
+              </div>
+              {relay.agents.length > 0 && <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 text-xs text-zinc-500">
                 {relay.agents.map((agent) => (
                   <span key={agent.agent} className="flex items-center gap-1" title={agent.reason}>
                     <span className={cx("size-1.5 rounded-full", agent.ok ? AGENT_META[agent.agent].dot : "bg-zinc-400")} />
@@ -116,10 +140,17 @@ export function App() {
                     {!agent.ok && "（不可用）"}
                   </span>
                 ))}
+              </div>}
+              <div className="flex flex-wrap justify-center gap-2">
+                <button onClick={() => relay.agents.length ? onNew() : setManagingConnections(true)} className="min-h-11 rounded-xl bg-zinc-900 px-5 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300">
+                  {relay.agents.length ? "＋ 新会话" : "添加连接"}
+                </button>
+                {relay.sessions.length > 0 && (
+                  <button onClick={() => setDrawer(true)} className="min-h-11 rounded-xl border border-zinc-200 px-5 text-sm font-medium hover:bg-zinc-100 md:hidden dark:border-zinc-700 dark:hover:bg-zinc-800">
+                    浏览会话
+                  </button>
+                )}
               </div>
-              <button onClick={() => relay.agents.length ? onNew() : setManagingConnections(true)} className="rounded-xl bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900">
-                {relay.agents.length ? "新会话" : "添加连接"}
-              </button>
             </div>
           </div>
         )}

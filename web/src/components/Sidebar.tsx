@@ -44,122 +44,148 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
   }, [relay.sessions, filter, query]);
 
   const pendingApprovals = relay.approvals.length;
+  const available = relay.agents.filter((entry) => entry.ok).length;
+  const canCreate = relay.agents.some((entry) => entry.ok);
 
   return (
     <div className="flex h-full flex-col bg-zinc-50 dark:bg-zinc-950/60">
-      <div className="flex items-center gap-2 px-3 pt-[max(env(safe-area-inset-top),0.75rem)] pb-2">
+      <div className="flex items-center gap-2 px-3 pt-[max(env(safe-area-inset-top),0.75rem)] pb-1">
         <img src="/icon.svg" alt="" className="size-6" />
         <span className="font-semibold">AnywhereCoding</span>
         <span
-          className={cx("ml-1 size-1.5 rounded-full", relay.connected ? "bg-emerald-500" : "bg-zinc-400")}
+          className={cx("size-1.5 rounded-full", relay.connected ? "bg-emerald-500" : "animate-pulse bg-amber-500")}
           title={relay.connected ? "已连接" : "连接中断，正在重连"}
         />
-        <button onClick={onLogout} className="ml-auto rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800">
+        <button onClick={onLogout} className="ml-auto min-h-8 rounded-md px-2 text-xs text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800">
           退出
         </button>
       </div>
       <ActivitySummary relay={relay} />
-      <section className="space-y-2 border-y border-zinc-200 px-3 py-3 dark:border-zinc-800" aria-label="连接的 IDE">
-        <div className="flex items-center text-xs font-medium text-zinc-500"><span>连接的 IDE</span><button onClick={onConnections} aria-label="添加或管理连接" className="ml-auto rounded px-2 py-1 text-zinc-700 hover:bg-zinc-200 dark:text-zinc-300 dark:hover:bg-zinc-800">＋ 添加</button></div>
-        {relay.agents.length ? relay.agents.map((entry) => <button key={entry.agent} onClick={onConnections} className="flex w-full items-center gap-2 text-left text-xs" title={entry.reason}><span className={cx("size-1.5 shrink-0 rounded-full", entry.ok ? AGENT_META[entry.agent].dot : "bg-amber-500")} /><span>{AGENT_META[entry.agent].label}</span><span className="ml-auto text-zinc-500">{entry.ok ? "可用" : "不可用"}</span></button>) : <p className="text-xs text-zinc-500">尚未添加连接</p>}
-      </section>
 
       <div className="space-y-2 px-3 pb-2">
-        <button
-          onClick={() => relay.agents.some((entry) => entry.ok) ? onNew(undefined, filter === "all" ? undefined : filter) : onConnections()}
-          className="flex w-full items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-        >
-          <span className="text-lg leading-none">＋</span> 新会话
-        </button>
+        <div className="flex gap-2">
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索会话或项目"
+            aria-label="搜索会话或项目"
+            className="min-h-9 min-w-0 flex-1 rounded-lg bg-zinc-200/60 px-3 text-sm outline-none placeholder:text-zinc-500 focus-visible:ring-2 focus-visible:ring-blue-500 dark:bg-zinc-800/80"
+          />
+          <button
+            onClick={() => canCreate ? onNew(undefined, filter === "all" ? undefined : filter) : onConnections()}
+            title={canCreate ? "新会话（可选择项目文件夹）" : "先添加连接"}
+            className="flex min-h-9 shrink-0 items-center gap-1 rounded-lg bg-zinc-900 px-3 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+          >
+            <span aria-hidden="true" className="text-base leading-none">＋</span>新会话
+          </button>
+        </div>
         {pendingApprovals > 0 && (
           <button
             onClick={() => onOpen(relay.approvals[0].sessionId)}
-            className="flex w-full items-center gap-2 rounded-lg bg-amber-500/15 px-3 py-2 text-left text-sm text-amber-800 dark:text-amber-300"
+            className="flex min-h-9 w-full items-center gap-2 rounded-lg bg-amber-500/15 px-3 text-left text-sm text-amber-800 dark:text-amber-300"
           >
             <span className="size-2 rounded-full bg-amber-500" />
             {pendingApprovals} 个请求等待审批
+            <span aria-hidden="true" className="ml-auto">›</span>
           </button>
         )}
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="搜索会话或项目"
-          className="w-full rounded-lg bg-zinc-200/60 px-3 py-1.5 text-sm outline-none placeholder:text-zinc-500 dark:bg-zinc-800/80"
-        />
-        <div className="flex flex-wrap gap-1 text-xs">
-          {(["all", ...relay.agents.map((entry) => entry.agent)] as Filter[]).map((value) => {
-            const availability = value === "all" ? null : relay.agents.find((agent) => agent.agent === value);
-            return (
-              <button
-                key={value}
-                onClick={() => setFilter(value)}
-                title={availability && !availability.ok ? availability.reason : undefined}
-                className={cx(
-                  "flex items-center gap-1 rounded-md px-2 py-1",
-                  filter === value ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "text-zinc-600 hover:bg-zinc-200 dark:text-zinc-400 dark:hover:bg-zinc-800",
-                )}
-              >
-                {value !== "all" && <span className={cx("size-1.5 rounded-full", availability?.ok ? AGENT_META[value].dot : "bg-zinc-400")} />}
-                {value === "all" ? "全部" : AGENT_META[value].label}
-              </button>
-            );
-          })}
-        </div>
-        {Object.entries(relay.errors).map(([agent, message]) => (
-          <p key={agent} className="rounded-md bg-zinc-200/60 px-2 py-1 text-xs text-zinc-600 dark:bg-zinc-800/60 dark:text-zinc-400">
-            {AGENT_META[agent as Agent]?.label}：{message}
-          </p>
-        ))}
+        {relay.agents.length > 1 && (
+          <div className="no-scrollbar -mx-3 flex gap-1 overflow-x-auto px-3 text-xs" role="group" aria-label="按 IDE 筛选">
+            {(["all", ...relay.agents.map((entry) => entry.agent)] as Filter[]).map((value) => {
+              const availability = value === "all" ? null : relay.agents.find((agent) => agent.agent === value);
+              return (
+                <button
+                  key={value}
+                  onClick={() => setFilter(value)}
+                  aria-pressed={filter === value}
+                  title={availability && !availability.ok ? availability.reason : undefined}
+                  className={cx(
+                    "flex min-h-7 shrink-0 items-center gap-1 rounded-full px-2.5 whitespace-nowrap",
+                    filter === value ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "bg-zinc-200/60 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800/70 dark:text-zinc-400 dark:hover:bg-zinc-800",
+                  )}
+                >
+                  {value !== "all" && <span className={cx("size-1.5 rounded-full", availability?.ok ? AGENT_META[value].dot : "bg-zinc-400")} />}
+                  {value === "all" ? "全部" : AGENT_META[value].label}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      <nav className="scroll-thin flex-1 overflow-y-auto px-2 pb-[max(env(safe-area-inset-bottom),0.75rem)]">
+      <nav className="scroll-thin min-h-0 flex-1 overflow-y-auto border-t border-zinc-200 px-2 pb-2 dark:border-zinc-800" aria-label="会话">
         {groups.map(([cwd, sessions]) => {
           const isCollapsed = collapsed[cwd];
           return (
             <div key={cwd || "-"} className="mb-1">
-              <div className="flex items-center gap-1 pt-2">
+              <div className="sticky top-0 z-10 flex items-center gap-1 bg-zinc-50 pt-2 dark:bg-zinc-950">
                 <button
                   onClick={() => setCollapsed((all) => ({ ...all, [cwd]: !isCollapsed }))}
                   title={shortPath(cwd)}
                   aria-expanded={!isCollapsed}
                   aria-label={`${isCollapsed ? "展开" : "收起"}项目 ${basename(cwd)}`}
-                  className="flex min-w-0 flex-1 items-center gap-1 rounded-md px-2 py-1 text-left text-xs font-medium text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300"
+                  className="flex min-h-8 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-xs font-semibold text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
                 >
-                  <span aria-hidden="true" className={cx("inline-block transition-transform", isCollapsed ? "-rotate-90" : "")}>▾</span>
+                  <span aria-hidden="true" className={cx("inline-block text-zinc-400 transition-transform", isCollapsed ? "-rotate-90" : "")}>▾</span>
+                  <span aria-hidden="true">📁</span>
                   <span className="truncate">{basename(cwd)}</span>
-                  <span className="ml-auto text-zinc-400">{sessions.length}</span>
+                  <span className="ml-auto font-normal text-zinc-400">{sessions.length}</span>
                 </button>
                 {cwd && <button
                   onClick={() => onNew(cwd, filter === "all" ? sessions.find((session) => session.id === activeId)?.agent ?? sessions[0]?.agent : filter)}
                   aria-label={`在项目 ${basename(cwd)} 中新建会话`}
                   title={`在 ${shortPath(cwd)} 中新建会话`}
-                  className="flex size-8 shrink-0 items-center justify-center rounded-md text-lg text-zinc-500 hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-zinc-800"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-md text-lg text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
                 >＋</button>}
               </div>
               {!isCollapsed &&
                 sessions.map((session) => {
                   const status = relay.statusOf(session);
+                  const active = activeId === session.id;
                   return (
                     <button
                       key={session.id}
                       onClick={() => onOpen(session.id)}
+                      aria-current={active ? "page" : undefined}
+                      title={`${AGENT_META[session.agent].label} · ${session.title}`}
                       className={cx(
-                        "group flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm",
-                        activeId === session.id ? "bg-zinc-200 dark:bg-zinc-800" : "hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60",
+                        "group flex min-h-10 w-full items-center gap-2 rounded-lg py-2 pr-2 pl-6 text-left text-sm",
+                        active ? "bg-zinc-200 font-medium dark:bg-zinc-800" : "text-zinc-700 hover:bg-zinc-200/60 dark:text-zinc-300 dark:hover:bg-zinc-800/60",
                       )}
                     >
-                      <span className={cx("size-1.5 shrink-0 rounded-full", AGENT_META[session.agent].dot)} title={AGENT_META[session.agent].label} />
+                      <span className={cx("size-1.5 shrink-0 rounded-full", AGENT_META[session.agent].dot)} aria-label={AGENT_META[session.agent].label} />
                       <span className="min-w-0 flex-1 truncate">{session.title}</span>
                       <StatusDot status={status} />
-                      <span className="shrink-0 text-[11px] text-zinc-400">{relativeTime(session.updatedAt)}</span>
+                      <span className="shrink-0 text-[11px] font-normal text-zinc-400">{relativeTime(session.updatedAt)}</span>
                     </button>
                   );
                 })}
             </div>
           );
         })}
-        {groups.length === 0 && <p className="px-3 py-6 text-center text-sm text-zinc-500">没有会话</p>}
+        {groups.length === 0 && (
+          <p className="px-3 py-8 text-center text-sm text-zinc-500">
+            {query.trim() ? "没有匹配的会话" : relay.agents.length ? "没有会话" : "添加连接后显示本机会话"}
+          </p>
+        )}
       </nav>
+
+      <section className="border-t border-zinc-200 px-2 pt-1.5 pb-[max(env(safe-area-inset-bottom),0.5rem)] dark:border-zinc-800" aria-label="连接的 IDE">
+        <button onClick={onConnections} aria-label="添加或管理连接" className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2 text-left text-xs hover:bg-zinc-200 dark:hover:bg-zinc-800">
+          <span className="font-medium text-zinc-600 dark:text-zinc-300">连接的 IDE</span>
+          <span className="flex items-center gap-1" aria-hidden="true">
+            {relay.agents.map((entry) => <span key={entry.agent} title={AGENT_META[entry.agent].label} className={cx("size-2 rounded-full", entry.ok ? AGENT_META[entry.agent].dot : "bg-zinc-300 ring-1 ring-amber-500 dark:bg-zinc-700")} />)}
+          </span>
+          <span className="ml-auto text-zinc-500">{relay.agents.length ? `${available}/${relay.agents.length} 可用` : "＋ 添加"}</span>
+          <span aria-hidden="true" className="text-zinc-400">›</span>
+        </button>
+        {Object.entries(relay.errors).map(([agent, message]) => (
+          <p key={agent} className="mx-2 mb-1 line-clamp-2 text-[11px] text-amber-700 dark:text-amber-400" title={message}>
+            {AGENT_META[agent as Agent]?.label}：{message}
+          </p>
+        ))}
+      </section>
     </div>
   );
 }

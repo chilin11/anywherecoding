@@ -4,7 +4,7 @@ import type { SessionConfig, SessionConfigPatch } from "../../../server/session-
 import { api, ApiError } from "../api.ts";
 import type { Relay } from "../store.ts";
 import { AGENT_META, basename, cx, shortPath } from "../util.ts";
-import { SessionConfiguration } from "./SessionConfiguration.tsx";
+import { configSummary, SessionConfiguration } from "./SessionConfiguration.tsx";
 
 type Props = {
   relay: Relay;
@@ -216,34 +216,38 @@ export function NewSession({ relay, initialCwd, initialAgent, projectOnly = fals
     }
   }
 
+  const ready = Boolean(cwd && text.trim()) && !directoryBusy && available.includes(agent) && Boolean(config) && !configLoading && !configError;
+
   return (
-    <div className={projectOnly ? "scroll-thin h-full overflow-y-auto" : "fixed inset-0 z-40 flex items-end justify-center bg-black/40 sm:items-center"} onClick={projectOnly ? undefined : onClose}>
+    <div className={projectOnly ? "scroll-thin h-full overflow-y-auto" : "fixed inset-0 z-40 flex items-end justify-center bg-black/40 sm:items-center sm:p-4"} onClick={projectOnly ? undefined : onClose}>
       <div
         onClick={(event) => event.stopPropagation()}
         role={projectOnly ? "region" : "dialog"} aria-modal={projectOnly ? undefined : true} aria-labelledby={dialogTitle}
-        className={projectOnly ? "mx-auto w-full max-w-3xl space-y-5 px-4 py-6" : "scroll-thin max-h-[92dvh] w-full max-w-lg space-y-4 overflow-y-auto rounded-t-2xl bg-white p-5 pb-[max(env(safe-area-inset-bottom),1.25rem)] shadow-xl sm:rounded-2xl dark:bg-zinc-900"}
+        className={projectOnly ? "mx-auto flex min-h-full w-full max-w-3xl flex-col gap-4 px-4 pt-4 sm:pt-6" : "scroll-thin flex max-h-[92dvh] w-full max-w-lg flex-col gap-4 overflow-y-auto rounded-t-2xl bg-white px-4 pt-4 shadow-xl sm:rounded-2xl sm:px-5 dark:bg-zinc-900"}
       >
-        <div className="flex items-center">
-          <div className="min-w-0"><h2 id={dialogTitle} className="text-lg font-semibold">新会话</h2>{projectOnly && <p className="truncate text-xs text-zinc-500" title={initialCwd ?? ""}>{shortPath(initialCwd)}</p>}</div>
-          <button onClick={onClose} aria-label="关闭新会话" className="ml-auto rounded-md px-2 text-zinc-400">✕</button>
+        {!projectOnly && <div aria-hidden="true" className="mx-auto -mt-1 h-1 w-10 shrink-0 rounded-full bg-zinc-300 sm:hidden dark:bg-zinc-700" />}
+        <div className="flex items-center gap-2">
+          <div className="min-w-0"><h2 id={dialogTitle} className="text-lg font-semibold">新会话</h2>{projectOnly && <p className="truncate text-xs text-zinc-500" title={initialCwd ?? ""}>📁 {shortPath(initialCwd)}</p>}</div>
+          <button onClick={onClose} aria-label="关闭新会话" className="ml-auto flex size-10 shrink-0 items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800">✕</button>
         </div>
 
         <div className="space-y-1.5">
-          <div className="text-xs font-medium text-zinc-500">Agent</div>
+          <div className="text-xs font-medium text-zinc-500">使用</div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {relay.agents.map((entry) => (
               <button
                 key={entry.agent}
                 disabled={!entry.ok || busy}
                 title={entry.reason}
+                aria-pressed={agent === entry.agent}
                 onClick={() => chooseAgent(entry.agent)}
                 className={cx(
-                  "flex items-center justify-center gap-1.5 rounded-xl border py-2 text-sm disabled:opacity-35",
-                  agent === entry.agent ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900" : "border-zinc-200 dark:border-zinc-700",
+                  "flex min-h-10 items-center justify-center gap-1.5 rounded-xl border px-2 text-sm disabled:opacity-35",
+                  agent === entry.agent ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900" : "border-zinc-200 hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-800",
                 )}
               >
-                <span className={cx("size-1.5 rounded-full", AGENT_META[entry.agent].dot)} />
-                {AGENT_META[entry.agent].label}
+                <span className={cx("size-1.5 shrink-0 rounded-full", AGENT_META[entry.agent].dot)} />
+                <span className="truncate">{AGENT_META[entry.agent].label}</span>
               </button>
             ))}
           </div>
@@ -253,20 +257,21 @@ export function NewSession({ relay, initialCwd, initialAgent, projectOnly = fals
           <div className="flex items-center text-xs font-medium text-zinc-500">
             项目文件夹
             {!browsing && (
-              <button disabled={directoryBusy} onClick={() => setBrowsing(true)} className="ml-auto text-zinc-600 underline disabled:opacity-40 dark:text-zinc-300">更换…</button>
+              <button disabled={directoryBusy} onClick={() => setBrowsing(true)} className="ml-auto min-h-8 rounded-md px-2 text-zinc-700 hover:bg-zinc-100 disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800">浏览…</button>
             )}
           </div>
-          {cwd && !browsing && <div className="truncate rounded-lg bg-zinc-100 px-3 py-2 font-mono text-sm dark:bg-zinc-800">{shortPath(cwd)}</div>}
+          {cwd && !browsing && <div className="truncate rounded-lg bg-zinc-100 px-3 py-2 font-mono text-sm dark:bg-zinc-800" title={cwd}>📁 {shortPath(cwd)}</div>}
           {cwd && !browsing && <CreateFolder key={cwd} parent={cwd} disabled={busy} onPick={pickFolder} onBusyChange={onFolderBusy} />}
           {!browsing && recent.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4 sm:mx-0 sm:flex-wrap sm:px-0" aria-label="最近项目">
               {recent.map((path) => (
                 <button
                   key={path}
                   title={path}
                   disabled={directoryBusy}
+                  aria-pressed={cwd === path}
                   onClick={() => pickFolder(path)}
-                  className={cx("rounded-lg border px-2 py-1 text-xs", cwd === path ? "border-zinc-900 dark:border-zinc-100" : "border-zinc-200 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400")}
+                  className={cx("min-h-8 shrink-0 rounded-full border px-3 text-xs whitespace-nowrap", cwd === path ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900" : "border-zinc-200 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800")}
                 >
                   {basename(path)}
                 </button>
@@ -283,16 +288,6 @@ export function NewSession({ relay, initialCwd, initialAgent, projectOnly = fals
           )}
         </div>}
 
-        <div className="space-y-2" aria-busy={configLoading}>
-          {config && <SessionConfiguration config={config} disabled={busy || configLoading} onChange={(patch) => setDraft((previous) => ({ ...previous, ...patch }))} />}
-          {configLoading && <p role="status" className="text-xs text-zinc-500">正在读取默认设置…</p>}
-          {configError && (
-            <p role="alert" className="text-xs text-red-600 dark:text-red-400">
-              {configError} <button onClick={() => { setConfigLoading(true); setConfigError(null); setConfigReload((value) => value + 1); }} className="underline">重试</button>
-            </p>
-          )}
-        </div>
-
         <div className="space-y-1.5">
           <label htmlFor={`${dialogTitle}-prompt`} className="text-xs font-medium text-zinc-500">第一条消息</label>
           <textarea
@@ -302,20 +297,47 @@ export function NewSession({ relay, initialCwd, initialAgent, projectOnly = fals
             disabled={busy}
             value={text}
             onChange={(event) => setText(event.target.value)}
-            rows={4}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                void create();
+              }
+            }}
+            rows={projectOnly ? 5 : 4}
             placeholder="要做什么？"
-            className="w-full resize-none rounded-xl border border-zinc-200 bg-transparent px-3 py-2 text-[15px] outline-none focus:border-zinc-400 dark:border-zinc-700"
+            className="w-full resize-none rounded-xl border border-zinc-200 bg-transparent px-3 py-2 text-base outline-none focus:border-zinc-400 sm:text-[15px] dark:border-zinc-700"
           />
         </div>
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
-        <button
-          onClick={() => void create()}
-          disabled={!cwd || !text.trim() || directoryBusy || !available.includes(agent) || !config || configLoading || !!configError}
-          className="w-full rounded-xl bg-zinc-900 py-3 font-medium text-white disabled:opacity-35 dark:bg-zinc-100 dark:text-zinc-900"
-        >
-          {busy ? "发送中…" : projectOnly ? "发送" : "开始"}
-        </button>
+        <details className="group rounded-xl border border-zinc-200 dark:border-zinc-800" open={Boolean(configError)}>
+          <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 px-3 text-xs text-zinc-500 select-none [&::-webkit-details-marker]:hidden">
+            <span aria-hidden="true">⚙</span>
+            <span className="font-medium text-zinc-600 dark:text-zinc-300">模型与权限</span>
+            <span className="min-w-0 flex-1 truncate">{configLoading ? "读取中…" : config ? configSummary(config).text : ""}</span>
+            <span aria-hidden="true" className="text-zinc-400 transition-transform group-open:rotate-180">▾</span>
+          </summary>
+          <div className="space-y-2 px-3 pb-3" aria-busy={configLoading}>
+            {config && <SessionConfiguration config={config} disabled={busy || configLoading} onChange={(patch) => setDraft((previous) => ({ ...previous, ...patch }))} />}
+            {configLoading && <p role="status" className="text-xs text-zinc-500">正在读取默认设置…</p>}
+          </div>
+        </details>
+        {configError && (
+          <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+            {configError} <button onClick={() => { setConfigLoading(true); setConfigError(null); setConfigReload((value) => value + 1); }} className="underline">重试</button>
+          </p>
+        )}
+
+        {error && <p role="alert" className="text-sm break-words text-red-600 dark:text-red-400">{error}</p>}
+        <div className={cx("sticky bottom-0 -mx-4 mt-auto border-t border-zinc-100 px-4 pt-3 pb-[max(env(safe-area-inset-bottom),1rem)] dark:border-zinc-800", projectOnly ? "bg-white dark:bg-zinc-900" : "bg-white sm:-mx-5 sm:px-5 dark:bg-zinc-900")}>
+          <button
+            onClick={() => void create()}
+            disabled={!ready || busy}
+            className="min-h-12 w-full rounded-xl bg-zinc-900 font-medium text-white hover:bg-zinc-700 disabled:opacity-35 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+          >
+            {busy ? "发送中…" : projectOnly ? "发送" : "开始"}
+          </button>
+          {!cwd && !projectOnly && <p className="mt-1.5 text-center text-[11px] text-zinc-500">先选择项目文件夹</p>}
+        </div>
       </div>
     </div>
   );
