@@ -1,0 +1,10 @@
+node_modules/
+web/dist/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+.anywherecoding/
+coverage/
+*.tsbuildinfo
