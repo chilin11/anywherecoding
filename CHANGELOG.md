@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.2.0
+
 - macOS app: `AnywhereCoding-macOS.dmg` (`pnpm dmg`) contains `AnywhereCoding.app`, a universal menu bar app with a bundled Node runtime that runs the server itself — no terminal, Homebrew or Node install. First run picks a free port (8787–8799), shows the local/LAN address, copies the token, and adds a login item. Menu adds LAN address, login toggle, logs, restart and quit-stops-server; crashes auto-restart. An already running AnywhereCoding server (e.g. the source LaunchAgent) is detected and only monitored. Release tags attach the DMG.
 - Server responses carry `X-AnywhereCoding: <version>`.
 - LaunchAgent now uses a stable node path (e.g. `/opt/homebrew/bin/node`) so `brew upgrade node` no longer breaks the service; reinstalling waits for launchd instead of failing with `Bootstrap failed: 5`.
