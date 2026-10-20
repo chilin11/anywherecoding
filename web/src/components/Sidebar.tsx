@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Agent, SessionSummary } from "../../../server/types.ts";
 import type { Relay } from "../store.ts";
-import { AGENT_META, basename, cx, relativeTime, shortPath } from "../util.ts";
+import { AGENT_META, basename, cx, isTouch, relativeTime, shortPath } from "../util.ts";
+import { usePins } from "../usePins.ts";
+import { SessionMenu } from "./SessionMenu.tsx";
 import { ActivitySummary } from "./SessionStatus.tsx";
 
 type Filter = "all" | Agent;
@@ -13,6 +15,8 @@ type Props = {
   onNew: (cwd?: string, agent?: Agent) => void;
   onLogout: () => void;
   onConnections: () => void;
+  /** A session was deleted from its row menu. */
+  onDeleted: (id: string) => void;
   /** Close the drawer on phones, collapse the sidebar on desktop. */
   onHide?: () => void;
 };
@@ -23,27 +27,83 @@ function StatusDot({ status }: { status: string }) {
   return null;
 }
 
-export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnections, onHide }: Props) {
+const COLLAPSED_KEY = "aw-collapsed-projects";
+
+function SessionRow({ relay, session, active, onOpen, onDeleted, pinned }: { relay: Relay; session: SessionSummary; active: boolean; onOpen: (id: string) => void; onDeleted: (id: string) => void; pinned?: boolean }) {
+  const status = relay.statusOf(session);
+  return (
+    <div
+      className={cx(
+        "group relative flex min-h-10 items-center rounded-lg",
+        active ? "bg-zinc-200 dark:bg-zinc-800" : "hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60",
+      )}
+    >
+      <button
+        onClick={() => onOpen(session.id)}
+        aria-current={active ? "page" : undefined}
+        title={`${AGENT_META[session.agent].label} · ${session.title}${session.cwd ? `\n${shortPath(session.cwd)}` : ""}`}
+        className={cx(
+          "flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-lg py-2 pl-6 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
+          isTouch ? "pr-10" : "pr-2",
+          active ? "font-medium" : "text-zinc-700 dark:text-zinc-300",
+        )}
+      >
+        <span className={cx("size-1.5 shrink-0 rounded-full", AGENT_META[session.agent].dot)} aria-label={AGENT_META[session.agent].label} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate">{session.title}</span>
+          {pinned && session.cwd && <span className="block truncate text-[11px] font-normal text-zinc-400">{basename(session.cwd)}</span>}
+        </span>
+        <StatusDot status={status} />
+        <span className={cx("shrink-0 text-[11px] font-normal text-zinc-400", !isTouch && "group-focus-within:invisible group-hover:invisible")}>{relativeTime(session.updatedAt)}</span>
+      </button>
+      <div className={cx("absolute top-1/2 right-1 -translate-y-1/2", !isTouch && "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 has-[[aria-expanded=true]]:opacity-100")}>
+        <SessionMenu relay={relay} session={session} onDeleted={() => onDeleted(session.id)} className="size-8" />
+      </div>
+    </div>
+  );
+}
+
+export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnections, onDeleted, onHide }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const { pins } = usePins();
+  const search = useRef<HTMLInputElement>(null);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "{}") ?? {}; } catch { return {}; }
+  });
+  useEffect(() => { localStorage.setItem(COLLAPSED_KEY, JSON.stringify(Object.fromEntries(Object.entries(collapsed).filter(([, value]) => value)))); }, [collapsed]);
+  // Cmd/Ctrl+K jumps to search from anywhere.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k" && search.current?.offsetParent) {
+        event.preventDefault();
+        search.current.focus();
+        search.current.select();
+      }
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, []);
   useEffect(() => { if (filter !== "all" && !relay.agents.some((entry) => entry.agent === filter)) setFilter("all"); }, [filter, relay.agents]);
 
-  const groups = useMemo(() => {
+  const { pinned, groups } = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const visible = relay.sessions.filter(
       (session) =>
         (filter === "all" || session.agent === filter) &&
         (!needle || session.title.toLowerCase().includes(needle) || (session.cwd ?? "").toLowerCase().includes(needle)),
     );
+    const pinnedSet = new Set(pins);
+    const pinned = pins.map((id) => visible.find((session) => session.id === id)).filter((session): session is SessionSummary => Boolean(session));
     // Projects ordered by their most recent session, like the Codex app.
     const byProject = new Map<string, SessionSummary[]>();
     for (const session of visible) {
+      if (pinnedSet.has(session.id)) continue;
       const key = session.cwd ?? "";
       byProject.set(key, [...(byProject.get(key) ?? []), session]);
     }
-    return [...byProject.entries()];
-  }, [relay.sessions, filter, query]);
+    return { pinned, groups: [...byProject.entries()] };
+  }, [relay.sessions, filter, query, pins]);
 
   const pendingApprovals = relay.approvals.length;
   const available = relay.agents.filter((entry) => entry.ok).length;
@@ -70,10 +130,11 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
       <div className="space-y-2 px-3 pb-2">
         <div className="flex gap-2">
           <input
+            ref={search}
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索会话或项目"
+            placeholder={isTouch ? "搜索会话或项目" : "搜索会话或项目  ⌘K"}
             aria-label="搜索会话或项目"
             className="min-h-9 min-w-0 flex-1 rounded-lg bg-zinc-200/60 px-3 text-sm outline-none placeholder:text-zinc-500 focus-visible:ring-2 focus-visible:ring-blue-500 dark:bg-zinc-800/80"
           />
@@ -120,6 +181,15 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
       </div>
 
       <nav className="scroll-thin min-h-0 flex-1 overflow-y-auto border-t border-zinc-200 px-2 pb-2 dark:border-zinc-800" aria-label="会话">
+        {pinned.length > 0 && (
+          <div className="mb-1">
+            <div className="sticky top-0 z-10 flex min-h-8 items-center gap-1.5 bg-zinc-50 px-2 pt-2 text-xs font-semibold text-zinc-600 dark:bg-zinc-950 dark:text-zinc-400">
+              <span aria-hidden="true" className="text-amber-500">★</span>置顶
+              <span className="ml-auto font-normal text-zinc-400">{pinned.length}</span>
+            </div>
+            {pinned.map((session) => <SessionRow key={session.id} relay={relay} session={session} active={activeId === session.id} onOpen={onOpen} onDeleted={onDeleted} pinned />)}
+          </div>
+        )}
         {groups.map(([cwd, sessions]) => {
           const isCollapsed = collapsed[cwd];
           return (
@@ -144,32 +214,11 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
                   className="flex size-8 shrink-0 items-center justify-center rounded-md text-lg text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
                 >＋</button>}
               </div>
-              {!isCollapsed &&
-                sessions.map((session) => {
-                  const status = relay.statusOf(session);
-                  const active = activeId === session.id;
-                  return (
-                    <button
-                      key={session.id}
-                      onClick={() => onOpen(session.id)}
-                      aria-current={active ? "page" : undefined}
-                      title={`${AGENT_META[session.agent].label} · ${session.title}`}
-                      className={cx(
-                        "group flex min-h-10 w-full items-center gap-2 rounded-lg py-2 pr-2 pl-6 text-left text-sm",
-                        active ? "bg-zinc-200 font-medium dark:bg-zinc-800" : "text-zinc-700 hover:bg-zinc-200/60 dark:text-zinc-300 dark:hover:bg-zinc-800/60",
-                      )}
-                    >
-                      <span className={cx("size-1.5 shrink-0 rounded-full", AGENT_META[session.agent].dot)} aria-label={AGENT_META[session.agent].label} />
-                      <span className="min-w-0 flex-1 truncate">{session.title}</span>
-                      <StatusDot status={status} />
-                      <span className="shrink-0 text-[11px] font-normal text-zinc-400">{relativeTime(session.updatedAt)}</span>
-                    </button>
-                  );
-                })}
+              {!isCollapsed && sessions.map((session) => <SessionRow key={session.id} relay={relay} session={session} active={activeId === session.id} onOpen={onOpen} onDeleted={onDeleted} />)}
             </div>
           );
         })}
-        {groups.length === 0 && (
+        {groups.length === 0 && pinned.length === 0 && (
           <p className="px-3 py-8 text-center text-sm text-zinc-500">
             {query.trim() ? "没有匹配的会话" : relay.agents.length ? "没有会话" : "添加连接后显示本机会话"}
           </p>
@@ -185,6 +234,11 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
           <span className="ml-auto text-zinc-500">{relay.agents.length ? `${available}/${relay.agents.length} 可用` : "＋ 添加"}</span>
           <span aria-hidden="true" className="text-zinc-400">›</span>
         </button>
+        {relay.agents.filter((entry) => entry.ok && entry.warning).map((entry) => (
+          <p key={`warn-${entry.agent}`} className="mx-2 mb-1 line-clamp-2 text-[11px] text-amber-700 dark:text-amber-400" title={entry.warning}>
+            ⚠ {AGENT_META[entry.agent].label}：{entry.warning}
+          </p>
+        ))}
         {Object.entries(relay.errors).map(([agent, message]) => (
           <p key={agent} className="mx-2 mb-1 line-clamp-2 text-[11px] text-amber-700 dark:text-amber-400" title={message}>
             {AGENT_META[agent as Agent]?.label}：{message}

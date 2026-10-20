@@ -17,7 +17,8 @@
     "dev:web": "vite --config web/vite.config.ts",
     "build": "vite build --config web/vite.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --test 'server/**/*.test.ts'"
+    "test": "node --test 'server/**/*.test.ts'",
+    "dmg": "pnpm build && node scripts/macapp.mjs"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

@@ -45,6 +45,8 @@ export const api = {
     call<{ sessions: SessionSummary[]; errors: Record<string, string>; agents: AgentAvailability[] }>("/api/sessions"),
   history: (id: string, before: string | null) =>
     call<History>(`/api/sessions/${enc(id)}/history${before ? `?before=${enc(before)}` : ""}`),
+  renameSession: (id: string, title: string) => call<{ ok: true }>(`/api/sessions/${enc(id)}`, { method: "PATCH", body: { title } }),
+  deleteSession: (id: string) => call<{ ok: true }>(`/api/sessions/${enc(id)}`, { method: "DELETE" }),
   send: (id: string, text: string) => call<{ ok: true }>(`/api/sessions/${enc(id)}/send`, { method: "POST", body: { text } }),
   interrupt: (id: string) => call<{ ok: true }>(`/api/sessions/${enc(id)}/interrupt`, { method: "POST" }),
   watch: (id: string) => call<{ ok: true }>(`/api/sessions/${enc(id)}/watch`, { method: "POST" }),

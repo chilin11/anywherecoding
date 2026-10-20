@@ -97,6 +97,14 @@ export function App() {
     void relay.refreshSessions();
   }
 
+  function deleted(id: string) {
+    setPending((all) => { const { [id]: _removed, ...rest } = all; return rest; });
+    if (id !== activeId) return;
+    // Leave the deleted chat without keeping it in back-navigation.
+    history.replaceState(null, "", location.pathname + location.search);
+    setActiveId(null);
+  }
+
   const sidebarHidden = !narrow && sidebar.collapsed;
   const showMenu = () => (narrow ? setDrawer(true) : sidebar.setCollapsed(false));
   const menuButton = (
@@ -115,7 +123,7 @@ export function App() {
           drawer ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <Sidebar relay={relay} activeId={activeId} onOpen={open} onNew={onNew} onConnections={() => { setCreating(null); setManagingConnections(true); setDrawer(false); }} onLogout={() => void logout()} onHide={narrow ? () => setDrawer(false) : () => sidebar.setCollapsed(true)} />
+        <Sidebar relay={relay} activeId={activeId} onOpen={open} onNew={onNew} onConnections={() => { setCreating(null); setManagingConnections(true); setDrawer(false); }} onLogout={() => void logout()} onDeleted={deleted} onHide={narrow ? () => setDrawer(false) : () => sidebar.setCollapsed(true)} />
       </aside>
       {!narrow && !sidebarHidden && (
         <div
@@ -144,7 +152,7 @@ export function App() {
             <div className="min-h-0 flex-1"><NewSession key={`${creating.cwd}:${creating.agent}`} relay={relay} initialCwd={creating.cwd} initialAgent={creating.agent} projectOnly onClose={() => setCreating(null)} onCreated={created} /></div>
           </div>
         ) : active ? (
-          <Chat key={active.id} relay={relay} session={active} onMenu={showMenu} menuAlways={sidebarHidden} onNew={onNew} />
+          <Chat key={active.id} relay={relay} session={active} onMenu={showMenu} menuAlways={sidebarHidden} onNew={onNew} onDeleted={() => deleted(active.id)} />
         ) : (
           <div className="flex h-full flex-col">
             <header className="flex items-center px-2 pt-[max(env(safe-area-inset-top),0.375rem)] pb-1 md:hidden">

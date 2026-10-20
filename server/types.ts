@@ -88,6 +88,8 @@ export type AgentAvailability = {
   agent: Agent;
   ok: boolean;
   reason?: string;
+  /** A usable connection with a known limitation the user should see. */
+  warning?: string;
 };
 
 export type Connection = AgentAvailability & { enabled: boolean; label: string };

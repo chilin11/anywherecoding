@@ -45,3 +45,30 @@ export function cx(...names: (string | false | null | undefined)[]): string {
 }
 
 export const isTouch = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+
+/** Clipboard that also works over plain-HTTP LAN addresses, where navigator.clipboard is unavailable. */
+export async function copyText(text: string): Promise<void> {
+  if (window.isSecureContext && navigator.clipboard) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+  document.body.append(area);
+  area.select();
+  try {
+    if (!document.execCommand("copy")) throw new Error("浏览器不允许复制");
+  } finally {
+    area.remove();
+  }
+}
+
+/** What deleting does for each client; Codex only archives. */
+export const DELETE_META: Record<Agent, { action: string; detail: string; permanent: boolean }> = {
+  codex: { action: "归档", detail: "移到 Codex 的“已归档”列表，可在 Codex 应用中恢复。", permanent: false },
+  claude: { action: "删除", detail: "会话文件移到 ~/.anywherecoding/trash/claude，可手动移回恢复。Claude.app 中对应的标签将无法打开。", permanent: false },
+  pi: { action: "删除", detail: "从 PI-Desktop 中永久删除，无法恢复。", permanent: true },
+  "pi-native": { action: "删除", detail: "会话文件移到 ~/.anywherecoding/trash/pi-native，可手动移回恢复。", permanent: false },
+};

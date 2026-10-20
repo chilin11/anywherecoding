@@ -212,7 +212,7 @@ function readSlice(path: string, start: number, length: number): string {
   }
 }
 
-export type TranscriptMeta = { cwd: string | null; title: string | null; firstPrompt: string | null };
+export type TranscriptMeta = { cwd: string | null; title: string | null; firstPrompt: string | null; /** An explicit rename (`/rename` or the web page). */ customTitle: string | null };
 
 /**
  * Title and cwd from the head and tail of a session file only; transcripts
@@ -225,6 +225,7 @@ export function readMeta(path: string): TranscriptMeta {
   let cwd: string | null = null;
   let firstPrompt: string | null = null;
   let title: string | null = null;
+  let customTitle: string | null = null;
   for (const raw of head.split("\n")) {
     if (!raw.startsWith("{")) continue;
     let line: Json;
@@ -246,7 +247,7 @@ export function readMeta(path: string): TranscriptMeta {
     if (!raw.includes("title") && !raw.includes("summary") && !raw.includes("agent-name")) continue;
     try {
       const line = JSON.parse(raw);
-      if (line.type === "custom-title" && line.customTitle) title = line.customTitle;
+      if (line.type === "custom-title" && line.customTitle) title = customTitle = line.customTitle;
       else if (line.type === "agent-name" && line.agentName) title = line.agentName;
       else if (line.type === "summary" && line.summary) title = line.summary;
       if (title) break;
@@ -254,5 +255,5 @@ export function readMeta(path: string): TranscriptMeta {
       // partial first line of the tail window
     }
   }
-  return { cwd, title, firstPrompt };
+  return { cwd, title, firstPrompt, customTitle };
 }

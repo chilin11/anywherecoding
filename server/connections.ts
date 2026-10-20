@@ -52,9 +52,7 @@ export class Connections {
       if (start) await adapter.start();
       // Catalog discovery validates the real protocol without sending a model prompt.
       await adapter.configuration(null);
-      const result = adapter.availability();
-      if (!result.ok) return result;
-      return { agent: adapter.agent, ok: true };
+      return adapter.availability();
     } catch (error) { return { agent: adapter.agent, ok: false, reason: (error as Error).message }; }
   }
   async detect(agent: Agent): Promise<AgentAvailability> {

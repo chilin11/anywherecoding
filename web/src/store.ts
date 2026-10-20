@@ -42,6 +42,21 @@ function mergeHistory(history: Item[], current: Item[], baseline: Map<string, It
   return merged;
 }
 
+/** Browser notification while the page is in the background; clicking opens the session. */
+function notify(title: string, body: string, tag: string, sessionId: string): void {
+  if (!document.hidden || !("Notification" in window) || Notification.permission !== "granted") return;
+  try {
+    const notification = new Notification(title, { body, tag, icon: "/icon-192.png" });
+    notification.onclick = () => {
+      window.focus();
+      location.hash = `#/s/${encodeURIComponent(sessionId)}`;
+      notification.close();
+    };
+  } catch {
+    // Some mobile browsers only allow notifications from a service worker.
+  }
+}
+
 /** All client state: sessions, open transcripts, approvals and the event stream. */
 export function useRelay(authed: boolean) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -58,6 +73,10 @@ export function useRelay(authed: boolean) {
   const sessionsRequest = useRef(0);
   const threadsRef = useRef(threads);
   threadsRef.current = threads;
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+  /** Last status seen per session, to notice running → idle. */
+  const lastStatus = useRef(new Map<string, SessionStatus>());
 
   const toast = useCallback((level: Toast["level"], message: string) => {
     const id = Date.now() + Math.random();
@@ -143,7 +162,13 @@ export function useRelay(authed: boolean) {
           return { ...all, [event.sessionId]: { ...thread, items: upsert(thread.items, item) } };
         });
         break;
-      case "status":
+      case "status": {
+        const previous = lastStatus.current.get(event.sessionId) ?? sessionsRef.current.find((entry) => entry.id === event.sessionId)?.status;
+        lastStatus.current.set(event.sessionId, event.status);
+        if (event.status === "idle" && (previous === "running" || previous === "approval")) {
+          const title = sessionsRef.current.find((entry) => entry.id === event.sessionId)?.title ?? "会话";
+          notify("任务已完成", title, `done:${event.sessionId}`, event.sessionId);
+        }
         setStatuses((all) => ({ ...all, [event.sessionId]: event.status }));
         if (event.status === "idle") {
           // Settle any streaming flags left by deltas whose completion we missed.
@@ -154,11 +179,10 @@ export function useRelay(authed: boolean) {
           });
         }
         break;
+      }
       case "approval":
         setApprovals((list) => [...list.filter((entry) => entry.id !== event.approval.id), event.approval]);
-        if (document.hidden && "Notification" in window && Notification.permission === "granted") {
-          new Notification(event.approval.title, { body: event.approval.detail.slice(0, 120), tag: event.approval.id });
-        }
+        notify(event.approval.title, event.approval.detail.slice(0, 120) || "等待审批", event.approval.id, event.approval.sessionId);
         break;
       case "approvalResolved":
         setApprovals((list) => list.filter((entry) => entry.id !== event.id));

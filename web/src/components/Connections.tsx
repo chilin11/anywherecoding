@@ -13,7 +13,7 @@ const HELP: Record<Agent, string> = {
 
 export function ConnectionsPanel({ relay, onClose }: { relay: Relay; onClose: () => void }) {
   const [entries, setEntries] = useState<Connection[]>([]);
-  const [results, setResults] = useState<Partial<Record<Agent, { ok: boolean; reason?: string }>>>({});
+  const [results, setResults] = useState<Partial<Record<Agent, { ok: boolean; reason?: string; warning?: string }>>>({});
   const [busy, setBusy] = useState<Agent | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { let alive = true; void api.connections().then((data) => { if (alive) setEntries(data.connections); }).catch((failure) => { if (alive) setError(failure.message); }); return () => { alive = false; }; }, []);
@@ -47,7 +47,8 @@ export function ConnectionsPanel({ relay, onClose }: { relay: Relay; onClose: ()
           <div className="flex items-center gap-2"><span className={cx("size-2 rounded-full", AGENT_META[entry.agent].dot)} /><h3 className="text-sm font-medium">{entry.label}</h3><span className="ml-auto text-xs text-zinc-500">{entry.enabled ? entry.ok ? "已连接" : "连接不可用" : "未添加"}</span></div>
           <p className="text-xs text-zinc-500">{HELP[entry.agent]}</p>
           {entry.enabled && !entry.ok && <p className="break-words text-xs text-amber-600">{entry.reason}</p>}
-          {result && <p role={result.ok ? "status" : "alert"} className={cx("break-words text-xs", result.ok ? "text-emerald-600" : "text-amber-600")}>{result.ok ? "检测到可用客户端" : `未检测到可用连接：${result.reason}`}</p>}
+          {entry.enabled && entry.ok && entry.warning && !result && <p className="break-words text-xs text-amber-600">⚠ {entry.warning}</p>}
+          {result && <p role={result.ok ? "status" : "alert"} className={cx("break-words text-xs", result.ok ? "text-emerald-600" : "text-amber-600")}>{result.ok ? `检测到可用客户端${result.warning ? `；⚠ ${result.warning}` : ""}` : `未检测到可用连接：${result.reason}`}</p>}
           <div className="flex justify-end gap-3 text-xs">
             <button disabled={busy != null} onClick={() => void act(entry, "detect")} className="rounded px-2 py-1.5 text-zinc-600 underline disabled:opacity-40 dark:text-zinc-300">重新检测</button>
             {entry.enabled && <button disabled={busy != null} onClick={() => void act(entry, "remove")} className="rounded px-2 py-1.5 text-red-600 disabled:opacity-40">移除</button>}

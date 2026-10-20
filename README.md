@@ -11,6 +11,9 @@
 - 手动添加本机连接，默认没有连接；检测不可用时显示具体原因，支持重新检测、重新连接和移除。
 - 枚举原生历史，按真实项目目录分组、搜索和继续对话。
 - 项目旁的 `＋` 直接进入该项目的新会话页面，不再询问项目目录。
+- 会话 `⋯` 菜单：置顶（仅保存在当前浏览器）、重命名、复制项目路径、删除；运行中或待审批时不能重命名/删除。
+- 复制回复与代码块；任务完成或需要审批时，页面在后台会发送浏览器通知，点击打开对应会话。
+- `⌘K` / `Ctrl+K` 聚焦会话搜索；项目分组的折叠状态保存在浏览器中。
 - 全局新会话支持目录浏览、新建子文件夹并自动选中。
 - 实时回复、思考内容、停止、工具审批和交互提问。
 - 模型、思考程度及客户端支持的权限模式设置。
@@ -19,11 +22,28 @@
 - 原生错误详情、重试提示、失败工具自动展开；发送失败保留草稿。
 - 手机布局、运行/待审批图标，以及浏览器标题中的活动数量。
 - 电脑端侧栏可拖动调宽（双击分隔线恢复默认，拖到最左收起，☰ 恢复），宽度保存在浏览器中。
-- macOS 状态栏图标：显示运行/待审批数量，点选进行中的会话直接打开网页。
+- macOS 应用（DMG）：内置 Node 和服务，菜单栏显示运行/待审批数量，点选进行中的会话直接打开网页。
 
-## 快速开始
+## 安装（macOS）
 
-需要 **Node.js >=24**、**pnpm 10**，以及至少一个已安装并完成本机配置的原生客户端。
+1. 在 [Releases](https://github.com/chilin11/anywherecoding/releases/latest) 下载 **`AnywhereCoding-macOS.dmg`**（Intel 和 Apple 芯片通用，macOS 13+）。
+2. 打开 DMG，把 **AnywhereCoding** 拖到“应用程序”。
+3. 从“应用程序”打开 AnywhereCoding。菜单栏出现 `</>` 图标，并弹出本机/手机访问地址；点“打开网页”会复制登录令牌并打开网页，粘贴令牌登录。
+4. 在网页中选择 **连接的 IDE → ＋ 添加**，连接已在本机安装并配置好的 Codex、Claude Code、PI-Desktop 或 Pi CLI。
+
+应用内置 Node.js 运行时，**不需要终端、Homebrew 或 Node**。服务随应用运行：退出菜单栏图标即停止服务；首次打开会加入登录项（开机自启），可在菜单中取消“开机时启动”。
+
+> **首次打开被拦截？** 应用是 ad-hoc 签名，没有付费的 Apple 开发者证书。如果提示“无法验证开发者”或“Apple 无法检查其是否包含恶意软件”，打开 **系统设置 › 隐私与安全性**，在页面下方点 **仍要打开**，输入密码确认即可，只需一次。
+
+- **数据**：令牌、连接和日志保存在 `~/.anywherecoding/`。首次运行在 8787–8799 中选择第一个空闲端口，写入 `config.json`；修改端口后在菜单中点“重启服务”。
+- **菜单**：进行中的会话（点选直接打开）、连接状态、复制登录令牌、复制手机访问地址、开机时启动、显示日志、重启服务。
+- **升级**：下载新版 DMG，拖入“应用程序”替换即可，配置和令牌保持不变。
+- **卸载**：退出应用并把它移到废纸篓；需要时再删除 `~/.anywherecoding`。
+- 如果端口上已有 AnywhereCoding 服务（例如下面的源码 LaunchAgent），应用只显示其状态，不会重复启动服务。
+
+### 从源码运行
+
+需要 **Node.js >=24** 和 **pnpm 10**：
 
 ```sh
 git clone https://github.com/chilin11/anywherecoding.git
@@ -47,6 +67,17 @@ node scripts/service.mjs token
 
 打开网页并登录，然后选择 **连接的 IDE → ＋ 添加**。添加成功后，原生会话会出现在项目列表中；检测不会发送模型提示词。连接选择保存在 `~/.anywherecoding/connections.json`，服务重启后恢复。
 
+### 构建 DMG
+
+需要 Xcode Command Line Tools（`xcode-select --install`）：
+
+```sh
+pnpm dmg              # release/AnywhereCoding-macOS.dmg（通用版）和 .sha256
+pnpm dmg --native     # 只构建本机架构，便于本地测试
+```
+
+脚本下载并校验固定版本的官方 Node.js（缓存在 `~/Library/Caches/anywherecoding/node`），用 `lipo` 合成通用二进制，打包服务端、网页和状态栏程序，ad-hoc 签名，启动内置服务做冒烟测试，再生成 DMG。推送 `v*` 标签时，GitHub Actions 会构建 DMG 并附加到 Release。
+
 ## 原生客户端连接
 
 | 连接 | 历史和继续方式 | 交互边界 |
@@ -66,7 +97,7 @@ Codex、Claude Code 和 Pi CLI 是通过原生后台协议进程操作，不能�
 launchctl setenv PI_DESKTOP_MCP_CONTROL 1
 ```
 
-控制信息默认读取 `~/.pi-desktop/mcp-control.json`。网页审批/提问需要桌面版本开放 `agent/pendingInteractive`；未开放的版本会提示限制。PI-Desktop 不可用时，可独立添加 Pi CLI。
+控制信息默认读取 `~/.pi-desktop/mcp-control.json`。网页审批/提问需要桌面版本开放 `agent/pendingInteractive`（上游 PI-Desktop 0.21 尚未开放）；未开放时连接仍可用，但连接面板、侧栏和运行中的 PI 会话会显示警告：工具权限请求只能在桌面处理，网页上会一直显示“正在处理”。PI-Desktop 不可用时，可独立添加 Pi CLI。
 
 PI-Desktop 约每 1.5 秒轮询当前查看的会话，并定期检查最近更新的 30 个会话的运行状态。审批仅在查看会话后查询，未观察的状态显示未知。上下文用量取最近主会话模型请求的 input + output + cache read + cache write，未知不显示为 0。
 
@@ -75,6 +106,17 @@ PI-Desktop 约每 1.5 秒轮询当前查看的会话，并定期检查最近更�
 当前按 Pi 1.2 的 RPC 协议适配；缺少所需命令的版本会在检测时显示失败。支持当前分支历史、同文件恢复、流式消息、停止和扩展 `confirm/select/input/editor` 交互。
 
 Pi 内置工具直接执行，没有通用的逐次工具审批模式。网页显示这一行为，不提供虚构的权限选项。自定义终端 UI 无法直接渲染在网页中。RPC 只提供当前模型支持的思考等级，其他模型在切换后重新查询；当前上下文 token 数不可得时显示未知。
+
+### 重命名与删除
+
+| 连接 | 重命名 | 删除 |
+| --- | --- | --- |
+| Codex | `thread/name/set` | `thread/archive` 归档，可在 Codex 应用的已归档列表恢复 |
+| Claude Code | 追加原生 `custom-title` 记录（与 `/rename` 相同），优先于 Claude.app 标题 | 会话 JSONL 及同名附属目录移到 `~/.anywherecoding/trash/claude/` |
+| PI-Desktop | `session/rename` | `session/delete`，**永久删除** |
+| Pi CLI | RPC `set_session_name` | 会话文件移到 `~/.anywherecoding/trash/pi-native/` |
+
+回收目录中每个文件旁有 `.origin` 记录原路径，移回即可恢复；AnywhereCoding 不会自动清空该目录。`ANYWHERE_TRASH` 可指定其他位置。
 
 ## 配置
 
@@ -99,42 +141,40 @@ Pi 内置工具直接执行，没有通用的逐次工具审批模式。网页�
 
 环境变量 `ANYWHERE_HOME` 可切换 AnywhereCoding 配置目录；`ANYWHERE_HOST` / `ANYWHERE_PORT` 覆盖监听设置。
 
-## macOS 登录自启
+## 状态栏图标
 
-先完成安装和构建，再执行：
+图标每 3 秒读取一次 `GET /api/status`（使用 `~/.anywherecoding/config.json` 中的令牌，令牌不会写入应用包）：
+
+- `</>`：服务正常、无活动；`◎ N`：N 个会话运行中；橙色 `✋ N!`：N 个会话待审批；灰色闪电：服务未连接、启动失败或令牌无效。
+- 菜单列出进行中的会话（点选打开对应网页会话），以及连接状态和警告、错误、打开网页、复制登录令牌和手机访问地址、显示日志、重启服务。
+
+`/api/status` 需要登录 Cookie 或 `Authorization: Bearer <token>`，返回运行/待审批计数、最多 20 个活动会话、连接可用性和读取错误。
+
+服务重启或退出会停止它拥有的 Codex、Claude Code 和 Pi CLI 进程，请在任务完成后操作；菜单会在有活动会话时先确认。移除 PI-Desktop 连接只断开网页控制，不停止桌面任务。
+
+后台服务访问 Downloads、Documents 等受保护目录需要单独授权。系统提示访问文件夹时选择允许，或在“隐私与安全性 → 文件与文件夹”中启用。由于没有固定的开发者签名，升级应用后可能需要重新允许。图片读取超时会显示不可用，其他网页请求继续响应。
+
+## 源码运行的登录自启（开发者）
+
+使用 DMG 安装的应用不需要这一步。从源码运行时，可以把当前目录安装为 LaunchAgent `io.github.chilin11.anywherecoding`，日志保存在 `~/.anywherecoding/logs/`：
 
 ```sh
 node scripts/service.mjs install
 node scripts/service.mjs status
 node scripts/service.mjs restart
+node scripts/service.mjs uninstall   # 保留配置和原生会话
 ```
 
-安装当前项目为 LaunchAgent `io.github.chilin11.anywherecoding`，日志保存在 `~/.anywherecoding/logs/`。停止并取消自启：
+Node 路径优先使用 `/opt/homebrew/bin/node` 这类不随版本变化的链接，`brew upgrade node` 后无需重装。
 
-```sh
-node scripts/service.mjs uninstall
-```
-
-卸载保留配置和原生会话。服务重启会停止它拥有的 Codex、Claude Code 和 Pi CLI 进程，请在任务完成后操作。移除 PI-Desktop 连接只断开网页控制，不停止桌面任务。
-
-macOS 后台 Node 访问 Downloads 等受保护目录需要单独授权；终端能读取不代表 LaunchAgent 已获授权。系统提示访问文件夹时选择允许，或在“隐私与安全性 → 文件与文件夹”中启用。图片读取超时会显示不可用，其他网页请求继续响应。
-
-## macOS 状态栏图标
-
-需要 Xcode Command Line Tools（`swiftc`）。构建、ad-hoc 签名并安装到 `~/Applications/AnywhereCodingBar.app`，同时设为登录自启：
+配套的仅监控状态栏图标（不内置服务，需要 Xcode Command Line Tools），安装到 `~/Applications/AnywhereCodingBar.app` 并登录自启：
 
 ```sh
 node scripts/menubar.mjs install
-node scripts/menubar.mjs status
 node scripts/menubar.mjs uninstall   # 移除应用和自启，服务与配置不受影响
 ```
 
-图标每 3 秒读取一次 `GET /api/status`（使用 `~/.anywherecoding/config.json` 中的令牌，令牌不会写入应用包）：
-
-- `</>`：服务正常、无活动；`◎ N`：N 个会话运行中；橙色 `✋ N!`：N 个会话待审批；灰色闪电：服务未连接或令牌无效。
-- 菜单列出进行中的会话（点选打开对应网页会话），以及连接状态、错误、打开网页、复制登录令牌、重启服务。
-
-`/api/status` 需要登录 Cookie 或 `Authorization: Bearer <token>`，返回运行/待审批计数、最多 20 个活动会话、连接可用性和读取错误。
+不要同时运行 `AnywhereCodingBar.app` 和 `AnywhereCoding.app`，否则菜单栏会出现两个图标。
 
 ## 远程访问
 

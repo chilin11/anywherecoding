@@ -16,7 +16,7 @@ test("connections default empty, probe disposable, persist explicit add, remove 
     const state = { agent, stopped: false, started: 0 }; made.push(state);
     return { agent, async start() { state.started++; }, async stop() { state.stopped = true; }, availability: () => ({ agent, ok: true }),
       async configuration() { if (fail) throw new Error("未检测到 Pi CLI"); return { model: null, thinking: null, permissionMode: null, models: [], permissionModes: [] }; },
-      async listSessions() { return []; }, async history() { return { items: [], before: null }; }, async send() {}, async create() { return "new"; }, async configure() { throw Error("unused"); }, async interrupt() {}, async resolve() {} };
+      async listSessions() { return []; }, async history() { return { items: [], before: null }; }, async send() {}, async create() { return "new"; }, async configure() { throw Error("unused"); }, async interrupt() {}, async resolve() {}, async rename() {}, async remove() {} };
   };
   try {
     const path = join(root, "connections.json"); const manager = new Connections(path, hub, factory);

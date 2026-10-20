@@ -9,13 +9,14 @@ import { Composer } from "./Composer.tsx";
 import { ItemView } from "./ItemView.tsx";
 import { configSummary, SessionConfiguration } from "./SessionConfiguration.tsx";
 import { SessionStatusIcon } from "./SessionStatus.tsx";
+import { SessionMenu } from "./SessionMenu.tsx";
 
 const DESKTOP_HINT: Record<string, string> = {
   codex: "Codex 桌面版里已打开的同一会话不会实时刷新，回到电脑后重新打开即可。避免两边同时发消息。",
   claude: "Claude 桌面版里已打开的同一会话不会实时刷新，回到电脑后重新打开即可。避免两边同时发消息。",
 };
 
-export function Chat({ relay, session, onMenu, menuAlways, onNew }: { relay: Relay; session: SessionSummary; onMenu: () => void; menuAlways?: boolean; onNew: (cwd?: string, agent?: Agent) => void }) {
+export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: { relay: Relay; session: SessionSummary; onMenu: () => void; menuAlways?: boolean; onNew: (cwd?: string, agent?: Agent) => void; onDeleted: () => void }) {
   const thread = relay.threads[session.id];
   const status = relay.statusOf(session);
   const running = status === "running" || status === "approval";
@@ -29,6 +30,8 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew }: { relay: Rel
   const settingsId = useId();
   const [hintClosed, setHintClosed] = useState(() => localStorage.getItem("aw-hint-closed") === "1");
   const [actionError, setActionError] = useState<string | null>(null);
+  const approvalLimit = relay.agents.find((entry) => entry.agent === session.agent && entry.ok)?.warning;
+  const [limitClosed, setLimitClosed] = useState(false);
 
   useEffect(() => {
     void relay.loadThread(session.id);
@@ -132,6 +135,7 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew }: { relay: Rel
           title={`在 ${shortPath(session.cwd)} 中新建会话`}
           className="flex min-h-10 min-w-10 shrink-0 items-center justify-center gap-1 rounded-lg border border-zinc-200 px-2 text-xs text-zinc-600 hover:bg-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
         ><span aria-hidden="true" className="text-lg leading-none">＋</span><span className="hidden sm:inline">新会话</span></button>}
+        <SessionMenu relay={relay} session={session} onDeleted={onDeleted} className="size-10 rounded-lg" />
       </header>
 
       <div className="relative min-h-0 flex-1">
@@ -166,6 +170,13 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew }: { relay: Rel
             {approvals.map((approval) => (
               <ApprovalCard key={approval.id} approval={approval} onError={(message) => relay.toast("error", message)} />
             ))}
+          </div>
+        )}
+        {approvalLimit && running && !limitClosed && (
+          <div role="status" className="flex items-start gap-2 rounded-lg bg-amber-500/12 px-3 py-1.5 text-xs leading-5 text-amber-800 dark:text-amber-300">
+            <span aria-hidden="true">⚠</span>
+            <span className="flex-1">{approvalLimit}。若长时间停在工具调用，请到桌面查看；也可在任务结束后把会话权限改为「自动」。</span>
+            <button onClick={() => setLimitClosed(true)} aria-label="关闭审批限制提示" className="-my-1.5 -mr-2 flex size-8 shrink-0 items-center justify-center text-amber-700/70">✕</button>
           </div>
         )}
         {hint && !hintClosed && (

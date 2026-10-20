@@ -1,0 +1,55 @@
+name: Release macOS app
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to attach the DMG to
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      ANYWHERE_NODE_CACHE: ${{ github.workspace }}/.node-cache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - uses: actions/cache@v4
+        with:
+          path: .node-cache
+          key: node-runtime-${{ hashFiles('scripts/macapp.mjs') }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm typecheck
+      # Builds the universal app, smoke-tests the bundled server and writes release/AnywhereCoding-macOS.dmg(.sha256).
+      - run: pnpm dmg
+      - name: Verify DMG
+        run: |
+          (cd release && shasum -a 256 -c AnywhereCoding-macOS.dmg.sha256)
+          mount=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" release/AnywhereCoding-macOS.dmg
+          app="$mount/AnywhereCoding.app"
+          codesign --verify --deep --strict "$app"
+          lipo -archs "$app/Contents/MacOS/AnywhereCoding" | grep -q 'x86_64 arm64'
+          lipo -archs "$app/Contents/Resources/node/bin/node" | grep -q 'x86_64 arm64'
+          test -f "$app/Contents/Resources/web/dist/index.html"
+          test -L "$mount/Applications"
+          hdiutil detach "$mount"
+      - name: Attach to GitHub release
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --generate-notes
+          gh release upload "$TAG" release/AnywhereCoding-macOS.dmg release/AnywhereCoding-macOS.dmg.sha256 --clobber

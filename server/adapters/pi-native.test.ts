@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -44,6 +44,7 @@ function command(c) {
   case 'get_available_thinking_levels': reply({levels:model.id==='a'?['off','low','high']:['off']}); break;
   case 'set_model': model={provider:c.provider,id:c.modelId,name:c.modelId,contextWindow:5000}; reply(model); break;
   case 'set_thinking_level': thinking=c.level; reply(); break;
+  case 'set_session_name': { const e={type:'session_info',id:'info-'+randomUUID(),parentId:entries.at(-1)?.id??null,name:c.name}; entries.push(e); if(file) appendFileSync(file,JSON.stringify(e)+'\n'); reply(); break; }
   case 'abort': reply(); emit({type:'agent_end',messages:[],willRetry:false}); settled(); break;
   case 'prompt': {
    if(c.message==='exit') { process.exit(7); return; }
@@ -265,4 +266,27 @@ test("installed Pi 1.2 RPC probe in isolated agentDir sends no model prompt", { 
     assert.notEqual(fresh.sessionId, sessionId); assert.equal(typeof fresh.sessionFile, "string");
     await rpc.close();
   } finally { await adapter.stop(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("rename uses set_session_name; remove refuses running sessions and moves the file to the relay trash", async () => {
+  const f = fixture();
+  const trash = join(f.dir, "trash");
+  process.env.ANYWHERE_TRASH = trash;
+  try {
+    const id = await f.adapter.create(f.dir, "hold");
+    await assert.rejects(f.adapter.remove(id), (e: any) => e.status === 409);
+    await assert.rejects(f.adapter.rename(id, "busy"), (e: any) => e.status === 409);
+    await f.adapter.interrupt(id);
+    await until(() => f.hub.liveStatus(`pi-native:${id}`) === "idle");
+    await f.adapter.rename(id, "Renamed task");
+    assert.equal((await f.adapter.listSessions()).find((s) => s.nativeId === id)?.title, "Renamed task");
+    const file = (f.adapter as any).files.get(id).path as string;
+    await f.adapter.remove(id);
+    assert.equal(existsSync(file), false);
+    assert.equal((await f.adapter.listSessions()).some((s) => s.nativeId === id), false);
+    const trashed = readdirSync(join(trash, "pi-native"));
+    assert.equal(trashed.filter((name) => name.endsWith(".jsonl")).length, 1);
+    assert.equal(readFileSync(join(trash, "pi-native", trashed.find((name) => name.endsWith(".origin"))!), "utf8").trim(), file);
+    assert.equal(f.hub.liveStatus(`pi-native:${id}`), undefined);
+  } finally { delete process.env.ANYWHERE_TRASH; await f.close(); }
 });

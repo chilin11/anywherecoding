@@ -13,6 +13,7 @@ type Json = Record<string, any>;
 
 const PROTOCOL = "2025-06-18";
 const POLL_MS = 1500;
+export const PENDING_UNSUPPORTED = "当前 PI-Desktop 未开放待审批查询（agent/pendingInteractive），网页收不到工具权限请求和提问，需在桌面上处理";
 const WATCH_TTL_MS = 2 * 60_000;
 const PAGE = 60;
 
@@ -170,7 +171,8 @@ export class PiAdapter implements Adapter {
   private readonly approvalMeta = new Map<string, { kind: "permission" | "ask"; requestId: string; sessionId: string; count: number }>();
   private timer: NodeJS.Timeout | null = null;
   private polling = false;
-  private pendingSupported = true;
+  /** null until probed on the current desktop launch. */
+  private pendingSupported: boolean | null = null;
   private catalogCache: { until: number; models: ModelOption[] } | null = null;
   private statusesUntil = 0;
   private readonly observedStatuses = new Map<string, boolean>();
@@ -182,7 +184,8 @@ export class PiAdapter implements Adapter {
   }
 
   availability(): AgentAvailability {
-    return this.error ? { agent: this.agent, ok: false, reason: this.error } : { agent: this.agent, ok: true };
+    if (this.error) return { agent: this.agent, ok: false, reason: this.error };
+    return this.pendingSupported === false ? { agent: this.agent, ok: true, warning: PENDING_UNSUPPORTED } : { agent: this.agent, ok: true };
   }
 
   /** Re-read the connection file each time: the port and token change with every desktop launch. */
@@ -199,7 +202,7 @@ export class PiAdapter implements Adapter {
     }
     if (!this.control || this.control.url !== info.url) {
       this.control = new PiControl(info.url, info.token);
-      this.pendingSupported = true;
+      this.pendingSupported = null;
       this.catalogCache = null;
     }
     return this.control;
@@ -318,6 +321,8 @@ export class PiAdapter implements Adapter {
   async listSessions(): Promise<SessionSummary[]> {
     const result = await this.invoke("session/list");
     const sessions: Json[] = result?.sessions ?? [];
+    // Learn up front whether approvals are visible, instead of only after a watched session polls.
+    if (this.pendingSupported === null && sessions[0]?.id) await this.pollPending(String(sessions[0].id)).catch(() => undefined);
     if (this.statusesUntil < Date.now()) {
       this.statusesUntil = Date.now() + 8000;
       const recent = sessions.filter((session) => !session.scheduledRun && session.source !== "pi-native" && !String(session.id).startsWith("native-"))
@@ -398,6 +403,22 @@ export class PiAdapter implements Adapter {
     await this.invoke("agent/abort", [{ sessionId }]);
   }
 
+  async rename(sessionId: string, title: string): Promise<void> {
+    await this.invoke("session/rename", [sessionId, title]);
+    this.hub.sessionsChanged();
+  }
+
+  /** PI-Desktop deletes the session permanently; refuse while it runs. */
+  async remove(sessionId: string): Promise<void> {
+    const status = await this.invoke("agent/getStatus", [sessionId]);
+    if (status?.status?.isRunning) throw Object.assign(new Error("会话正在运行或等待审批，请先停止当前回合"), { status: 409 });
+    await this.invoke("session/delete", [sessionId], true);
+    this.watched.delete(sessionId);
+    this.observedStatuses.delete(sessionId);
+    for (const [id, meta] of [...this.approvalMeta]) if (meta.sessionId === sessionId) this.approvalMeta.delete(id);
+    this.hub.forget(sessionKey(this.agent, sessionId));
+  }
+
   private async poll(): Promise<void> {
     if (this.stopped || this.polling) return;
     this.polling = true;
@@ -437,19 +458,20 @@ export class PiAdapter implements Adapter {
   }
 
   private async pollPending(sessionId: string): Promise<void> {
-    if (!this.pendingSupported) return;
+    if (this.pendingSupported === false) return;
     let pending: Json;
     try {
       pending = await this.invoke("agent/pendingInteractive", [{ sessionId }]);
     } catch (error) {
       if ((error as McpError).code === "NOT_FOUND") {
-        // Older desktop build without the operation exposed.
+        // Desktop builds that do not expose the operation: approvals stay desktop-only.
         this.pendingSupported = false;
-        this.hub.notice("info", "当前 PI-Desktop 版本未开放待审批查询，网页无法审批 PI 会话");
+        this.hub.sessionsChanged();
         return;
       }
       throw error;
     }
+    this.pendingSupported = true;
     if (this.stopped) return;
     const key = sessionKey(this.agent, sessionId);
     const live = new Set<string>();

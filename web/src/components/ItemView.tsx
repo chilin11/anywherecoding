@@ -1,9 +1,9 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type { ImageInfo, Item } from "../../../server/types.ts";
-import { cx } from "../util.ts";
+import { copyText, cx, isTouch } from "../util.ts";
 
 function ImagePreview({ src, alt }: ImageInfo) {
   const [failed, setFailed] = useState(false);
@@ -14,11 +14,42 @@ function Images({ images }: { images?: ImageInfo[] }) {
   if (!images?.length) return null;
   return <div className="my-2 grid min-w-0 gap-2">{images.map((image, index) => <ImagePreview key={`${index}:${image.src.slice(0,160)}`} {...image} />)}</div>;
 }
+function CopyButton({ text, label = "复制", className }: { text: () => string; label?: string; className?: string }) {
+  const [state, setState] = useState<"idle" | "done" | "failed">("idle");
+  useEffect(() => {
+    if (state === "idle") return;
+    const timer = setTimeout(() => setState("idle"), 1500);
+    return () => clearTimeout(timer);
+  }, [state]);
+  return (
+    <button
+      type="button"
+      onClick={() => copyText(text()).then(() => setState("done"), () => setState("failed"))}
+      aria-label={state === "done" ? "已复制" : label}
+      className={cx("inline-flex min-h-7 items-center gap-1 rounded-md px-1.5 text-xs text-zinc-500 hover:bg-zinc-200/70 hover:text-zinc-800 dark:hover:bg-zinc-700/70 dark:hover:text-zinc-200", className)}
+    >
+      <svg aria-hidden="true" viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.4">
+        {state === "done" ? <path d="m3.5 8.5 3 3 6-7" strokeLinecap="round" strokeLinejoin="round" /> : <><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5V3.75A1.25 1.25 0 0 0 9.25 2.5h-5.5A1.25 1.25 0 0 0 2.5 3.75v5.5a1.25 1.25 0 0 0 1.25 1.25H5.5" /></>}
+      </svg>
+      {state === "done" ? "已复制" : state === "failed" ? "复制失败" : label}
+    </button>
+  );
+}
+function CodeBlock({ children }: { children?: ReactNode }) {
+  const ref = useRef<HTMLPreElement>(null);
+  return (
+    <div className="group/code relative">
+      <pre ref={ref}>{children}</pre>
+      <CopyButton text={() => ref.current?.textContent ?? ""} className={cx("absolute top-1 right-1 bg-zinc-100/90 dark:bg-zinc-800/90", !isTouch && "opacity-0 group-hover/code:opacity-100 focus-visible:opacity-100")} />
+    </div>
+  );
+}
 const Markdown = memo(function Markdown({ text }: { text: string }) {
   return <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} urlTransform={(url) => /^data:image\/(png|jpeg|gif|webp|avif);base64,/i.test(url) ? url : defaultUrlTransform(url)} components={{
     a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
     img: ({ src, alt }) => typeof src === "string" ? <ImagePreview src={src} alt={alt} /> : null,
     p: ({ children }) => <div className="my-2">{children}</div>,
+    pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
   }}>{text}</ReactMarkdown>;
 });
 
@@ -67,7 +98,10 @@ function Reasoning({ item }: { item: Item }) {
 export const ItemView = memo(function ItemView({ item }: { item: Item }) {
   switch (item.kind) {
     case "user": return <div className="flex justify-end"><div className="max-w-[85%] rounded-2xl rounded-br-md bg-zinc-100 px-4 py-2.5 text-[15px] leading-7 whitespace-pre-wrap break-words dark:bg-zinc-800">{item.text}<Images images={item.images} /></div></div>;
-    case "assistant": return <div className={cx("md min-w-0", item.streaming && "caret")}><Markdown text={item.text} /><Images images={item.images} /></div>;
+    case "assistant": return <div className="group/msg min-w-0">
+      <div className={cx("md min-w-0", item.streaming && "caret")}><Markdown text={item.text} /><Images images={item.images} /></div>
+      {!item.streaming && item.text.trim() && <div className={cx("-ml-1.5 mt-1 flex", !isTouch && "opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100")}><CopyButton text={() => item.text} /></div>}
+    </div>;
     case "reasoning": return <Reasoning item={item} />;
     case "tool": return <ToolView item={item} />;
     case "error": return <div role="alert" className="rounded-lg bg-red-500/10 px-3 py-2 text-sm whitespace-pre-wrap break-words text-red-700 dark:text-red-300">{item.text}</div>;

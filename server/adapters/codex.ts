@@ -420,6 +420,23 @@ export class CodexAdapter implements Adapter {
     await rpc.request("turn/interrupt", { threadId, turnId });
   }
 
+  async rename(threadId: string, title: string): Promise<void> {
+    const rpc = await this.connection();
+    await rpc.request("thread/name/set", { threadId, name: title });
+    this.hub.sessionsChanged();
+  }
+
+  /** Codex archives (restorable from the Codex app's archived list); thread/list omits archived threads. */
+  async remove(threadId: string): Promise<void> {
+    const key = sessionKey(this.agent, threadId);
+    if (this.activeTurn.has(threadId) || this.hub.liveStatus(key) === "running" || this.hub.liveStatus(key) === "approval") throw Object.assign(new Error("会话正在运行或等待审批，请先停止当前回合"), { status: 409 });
+    const rpc = await this.connection();
+    await rpc.request("thread/archive", { threadId });
+    this.loaded.delete(threadId);
+    if (this.overrides.delete(threadId)) this.saveConfig();
+    this.hub.forget(key);
+  }
+
   private markTurn(threadId: string, turnId: string): void {
     this.activeTurn.set(threadId, turnId);
     this.hub.status(sessionKey(this.agent, threadId), "running");

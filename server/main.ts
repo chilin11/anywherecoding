@@ -16,6 +16,7 @@ import type { Agent, ApprovalAnswer, RelayEvent, SessionSummary } from "./types.
 import { parseConfigPatch } from "./session-config.ts";
 import { Media } from "./media.ts";
 import { summarize } from "./status.ts";
+import { cleanTitle } from "./trash.ts";
 
 const VERSION: string = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8")).version;
 
@@ -57,6 +58,8 @@ class HttpError extends Error {
 }
 
 function securityHeaders(response: ServerResponse): void {
+  // Lets the macOS app tell this server apart from another program holding the port.
+  response.setHeader("X-AnywhereCoding", VERSION);
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("X-Frame-Options", "DENY");
   response.setHeader("Referrer-Policy", "no-referrer");
@@ -248,6 +251,20 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     const nativeId = await adapter.create(cwd, text, selection);
     sessionCwds.set(`${adapter.agent}:${nativeId}`, cwd);
     sendJson(response, 200, { id: `${adapter.agent}:${nativeId}` });
+    return;
+  }
+  const sessionRoot = path.match(/^\/api\/sessions\/([^/]+)$/);
+  if (sessionRoot) {
+    const key = decodeURIComponent(sessionRoot[1]!);
+    const { adapter, nativeId } = adapterFor(key);
+    if (method === "PATCH") {
+      const body = await readBody(request);
+      await adapter.rename(nativeId, cleanTitle(body.title));
+    } else if (method === "DELETE") {
+      await adapter.remove(nativeId);
+      sessionCwds.delete(key);
+    } else throw new HttpError(405, "method not allowed");
+    sendJson(response, 200, { ok: true });
     return;
   }
   const sessionMatch = path.match(/^\/api\/sessions\/([^/]+)\/(history|send|interrupt|watch)$/);

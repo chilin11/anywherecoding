@@ -25,6 +25,10 @@ export interface Adapter {
   configuration(nativeId: string | null): Promise<SessionConfig>;
   configure(nativeId: string, patch: SessionConfigPatch): Promise<SessionConfig>;
   interrupt(nativeId: string): Promise<void>;
+  /** Set the native session title. */
+  rename(nativeId: string, title: string): Promise<void>;
+  /** Delete (or archive, where the client only archives) a session that is not running. */
+  remove(nativeId: string): Promise<void>;
   resolve(approvalId: string, answer: ApprovalAnswer): Promise<void>;
   /** Hint that a client is looking at this session (polling adapters use it). */
   watch?(nativeId: string): void;
@@ -78,6 +82,14 @@ export class Hub {
   }
 
   errorItems(sessionId: string): Item[] { return this.errors.get(sessionId) ?? []; }
+
+  /** Forget relay-side state of a deleted session. */
+  forget(sessionId: string): void {
+    for (const approval of [...this.approvals.values()]) if (approval.sessionId === sessionId) this.resolveApproval(approval.id);
+    this.statuses.delete(sessionId);
+    this.errors.delete(sessionId);
+    this.sessionsChanged();
+  }
 
   delta(sessionId: string, itemId: string, text: string): void {
     this.emit({ type: "delta", sessionId, itemId, text });

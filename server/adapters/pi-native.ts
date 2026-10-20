@@ -7,6 +7,7 @@ import type { Adapter, Hub } from "../hub.ts";
 import type { AgentAvailability, ApprovalAnswer, History, Item, SessionSummary, ToolInfo } from "../types.ts";
 import { invalidConfig, type SessionConfig, type SessionConfigPatch } from "../session-config.ts";
 import { diffStats, extractImages } from "../artifacts.ts";
+import { moveToTrash } from "../trash.ts";
 
 type Json = Record<string, any>;
 const TIMEOUT = 20_000;
@@ -585,6 +586,33 @@ export class PiNativeAdapter implements Adapter {
       }
       return config;
     } finally { live.locked = false; }
+  }
+
+  /** Native set_session_name appends a session_info entry to the session file. */
+  async rename(nativeId: string, title: string): Promise<void> {
+    const live = await this.ensure(nativeId);
+    if (live.locked || live.busy) throw busy();
+    live.locked = true;
+    try {
+      await this.idle(live);
+      await live.rpc.request("set_session_name", { name: title });
+    } finally { live.locked = false; }
+    this.hub.sessionsChanged();
+  }
+
+  /** Close any RPC process for the session, then move its file to the relay trash. */
+  async remove(nativeId: string): Promise<void> {
+    const live = this.live.get(nativeId);
+    if (live && (live.locked || live.busy)) throw busy();
+    const file = await this.file(nativeId);
+    if (live) {
+      this.cancelDialogs(live, true);
+      this.live.delete(nativeId);
+      await live.rpc.close();
+    }
+    moveToTrash(file.path, this.agent);
+    this.files.delete(nativeId);
+    this.hub.forget(key(nativeId));
   }
 
   async interrupt(nativeId: string): Promise<void> {

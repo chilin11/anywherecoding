@@ -1,7 +1,8 @@
 import { errorText } from "../errors.ts";
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { moveToTrash } from "../trash.ts";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
@@ -183,7 +184,7 @@ export class ClaudeAdapter implements Adapter {
         id: key,
         agent: this.agent,
         nativeId: file.id,
-        title: desktop?.title || meta.title || firstLine(meta.firstPrompt ?? "") || "(无标题)",
+        title: meta.customTitle || desktop?.title || meta.title || firstLine(meta.firstPrompt ?? "") || "(无标题)",
         cwd: meta.cwd,
         updatedAt: file.mtime,
         status: this.hub.liveStatus(key) ?? (this.runs.get(file.id)?.busy ? "running" : "idle"),
@@ -541,6 +542,37 @@ export class ClaudeAdapter implements Adapter {
       this.saveConfig();
     }
     return sessionId;
+  }
+
+  private assertIdle(sessionId: string): string {
+    const run = this.runs.get(sessionId);
+    const live = this.hub.liveStatus(sessionKey(this.agent, sessionId));
+    if (run?.busy || live === "running" || live === "approval") throw Object.assign(new Error("会话正在运行或等待审批，请先停止当前回合"), { status: 409 });
+    const path = this.pathFor(sessionId);
+    if (!path) throw Object.assign(new Error("找不到该 Claude 会话文件"), { status: 404 });
+    return path;
+  }
+
+  /** Same record Claude Code's /rename appends; it outranks the Claude.app title. */
+  async rename(sessionId: string, title: string): Promise<void> {
+    const path = this.assertIdle(sessionId);
+    appendFileSync(path, JSON.stringify({ type: "custom-title", customTitle: title, sessionId }) + "\n");
+    this.meta.delete(path);
+    this.hub.sessionsChanged();
+  }
+
+  /** Move the transcript (and its sidecar folder) to the relay trash. */
+  async remove(sessionId: string): Promise<void> {
+    const path = this.assertIdle(sessionId);
+    const run = this.runs.get(sessionId);
+    if (run?.alive) run.child.kill("SIGTERM");
+    moveToTrash(path, this.agent);
+    const folder = path.slice(0, -".jsonl".length);
+    if (existsSync(folder) && statSync(folder).isDirectory()) moveToTrash(folder, this.agent);
+    this.paths.delete(sessionId);
+    this.meta.delete(path);
+    if (this.overrides.delete(sessionId)) this.saveConfig();
+    this.hub.forget(sessionKey(this.agent, sessionId));
   }
 
   async interrupt(sessionId: string): Promise<void> {

@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// Build, install and manage the macOS menu bar companion (macos/AnywhereCodingBar).
+// Developer tool: build and install the monitor-only menu bar app (macos/AnywhereCodingBar) next to the
+// LaunchAgent service from scripts/service.mjs. End users get AnywhereCoding.app from scripts/macapp.mjs instead.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { compileApp, infoPlist, root, run, xml } from "./swift-build.mjs";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const name = "AnywhereCodingBar";
 const bundleId = "io.github.chilin11.anywherecoding.menubar";
 const label = bundleId;
@@ -19,34 +19,30 @@ const binary = join(app, "Contents/MacOS", name);
 const plist = join(homedir(), "Library/LaunchAgents", `${label}.plist`);
 const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 const command = process.argv[2] ?? "status";
-const xml = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
-function run(file, args, options = {}) { return execFileSync(file, args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], ...options }); }
 function launch(...args) { return execFileSync("launchctl", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+/** bootout returns before the job is gone; bootstrapping too early fails with "5: Input/output error". */
+function bootoutAndWait(target) {
+  try { launch("bootout", target); } catch { /* not loaded */ }
+  for (let i = 0; i < 50; i++) {
+    try { launch("print", target); } catch { return; }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+  }
+}
+function bootstrap(plistPath) {
+  for (let attempt = 1; ; attempt++) {
+    try { launch("bootstrap", domain, plistPath); return; } catch (error) {
+      if (attempt >= 5) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500 * attempt);
+    }
+  }
+}
 function loaded() { try { launch("print", `${domain}/${label}`); return true; } catch { return false; } }
 
 function build() {
-  if (process.platform !== "darwin") throw new Error("The menu bar app requires macOS");
   rmSync(builtApp, { recursive: true, force: true });
-  const macos = join(builtApp, "Contents/MacOS");
-  mkdirSync(macos, { recursive: true });
-  const arch = process.arch === "arm64" ? "arm64" : "x86_64";
-  run("xcrun", ["swiftc", "-O", "-target", `${arch}-apple-macos13.0`, "-o", join(macos, name), join(root, "macos/AnywhereCodingBar/main.swift")], { stdio: ["ignore", "inherit", "inherit"] });
-  writeFileSync(join(builtApp, "Contents/Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleIdentifier</key><string>${bundleId}</string>
-<key>CFBundleName</key><string>AnywhereCoding</string>
-<key>CFBundleDisplayName</key><string>AnywhereCoding</string>
-<key>CFBundleExecutable</key><string>${name}</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>${xml(version)}</string>
-<key>CFBundleVersion</key><string>${xml(version)}</string>
-<key>LSMinimumSystemVersion</key><string>13.0</string>
-<key>LSUIElement</key><true/>
-<key>NSHighResolutionCapable</key><true/>
-</dict></plist>
-`);
+  compileApp(join(builtApp, "Contents/MacOS", name), { native: process.argv.includes("--native") });
+  writeFileSync(join(builtApp, "Contents/Info.plist"), infoPlist({ bundleId, name: "AnywhereCoding", executable: name, version }));
   run("plutil", ["-lint", join(builtApp, "Contents/Info.plist")]);
   // No Developer ID on this machine: ad-hoc sign so the bundle has a stable, valid signature.
   run("codesign", ["--force", "--sign", "-", "--timestamp=none", builtApp]);
@@ -55,7 +51,7 @@ function build() {
 }
 
 function stop() {
-  if (loaded()) launch("bootout", `${domain}/${label}`);
+  bootoutAndWait(`${domain}/${label}`);
   try { execFileSync("pkill", ["-x", name], { stdio: "ignore" }); } catch { /* not running */ }
 }
 
@@ -67,6 +63,8 @@ if (command === "build") {
   mkdirSync(installDir, { recursive: true });
   rmSync(app, { recursive: true, force: true });
   run("ditto", [builtApp, app]);
+  // A browser-downloaded package carries quarantine; the user explicitly installs this ad-hoc signed app.
+  try { execFileSync("xattr", ["-dr", "com.apple.quarantine", app], { stdio: "ignore" }); } catch { /* not quarantined */ }
   mkdirSync(dirname(plist), { recursive: true });
   if (existsSync(plist) && !readFileSync(plist, "utf8").includes(`<string>${label}</string>`)) throw new Error("Existing unrelated plist; refusing overwrite");
   writeFileSync(plist, `<?xml version="1.0" encoding="UTF-8"?>
@@ -82,10 +80,10 @@ if (command === "build") {
 </dict></plist>
 `, { mode: 0o644 });
   run("plutil", ["-lint", plist]);
-  launch("bootstrap", domain, plist);
+  bootstrap(plist);
   console.log(`Installed ${app} and started it at login (${label})`);
 } else if (command === "start") {
-  if (!loaded()) launch("bootstrap", domain, plist);
+  if (!loaded()) bootstrap(plist);
   else launch("kickstart", `${domain}/${label}`);
   console.log("Started");
 } else if (command === "uninstall") {
