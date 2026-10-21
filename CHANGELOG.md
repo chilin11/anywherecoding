@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.2.1
+
+- Codex: release the thread writer lock (Codex ≥0.163) as soon as a web turn finishes, so the Codex desktop app can keep working on the same thread while staying open. A thread still held by another Codex process now shows a clear 409 message instead of `already has an active writer`.
+
 ## v0.2.0
 
 - macOS app: `AnywhereCoding-macOS.dmg` (`pnpm dmg`) contains `AnywhereCoding.app`, a universal menu bar app with a bundled Node runtime that runs the server itself — no terminal, Homebrew or Node install. First run picks a free port (8787–8799), shows the local/LAN address, copies the token, and adds a login item. Menu adds LAN address, login toggle, logs, restart and quit-stops-server; crashes auto-restart. An already running AnywhereCoding server (e.g. the source LaunchAgent) is detected and only monitored. Release tags attach the DMG.
