@@ -127,6 +127,8 @@ export class CodexAdapter implements Adapter {
   private readonly bin: string | null;
   /** Threads resumed into our app-server (turn/start needs a loaded thread). */
   private readonly loaded = new Set<string>();
+  /** In-flight thread/unsubscribe calls; a resume must wait so it does not race the unload. */
+  private readonly releasing = new Map<string, Promise<void>>();
   private readonly activeTurn = new Map<string, string>();
   private readonly pending = new Map<string, PendingRequest>();
   private readonly liveTools = new Map<string, Map<string, Item>>();
@@ -171,7 +173,9 @@ export class CodexAdapter implements Adapter {
     if (!this.bin) return Promise.reject(new Error("codex not found"));
     const bin = this.bin;
     this.starting = (async () => {
-      const rpc = new LineRpc(bin, ["app-server"], { env: process.env });
+      // Codex ≥0.163 holds a per-thread writer lock while a thread is loaded. Unload as
+      // soon as we unsubscribe so Codex desktop/CLI can write the thread between our turns.
+      const rpc = new LineRpc(bin, ["-c", "thread_unload_delay_secs=0", "app-server"], { env: process.env });
       rpc.on("notification", (method: string, params: Json) => this.onNotification(method, params));
       rpc.on("request", (id: number | string, method: string, params: Json) => this.onRequest(id, method, params));
       rpc.on("exit", (code: unknown) => this.onExit(rpc, code));
@@ -199,6 +203,7 @@ export class CodexAdapter implements Adapter {
     if (this.rpc !== rpc) return;
     this.rpc = null;
     this.loaded.clear();
+    this.releasing.clear();
     for (const threadId of this.activeTurn.keys()) this.hub.notice("error", `Codex 进程退出 (${code})${rpc.stderrTail?.trim() ? `\n${rpc.stderrTail.trim().slice(-2000)}` : ""}`, sessionKey(this.agent, threadId));
     for (const threadId of this.liveTools.keys()) this.finishTools(threadId, "Codex 进程已退出，工具执行中断");
     for (const threadId of this.activeTurn.keys()) this.hub.status(sessionKey(this.agent, threadId), "idle");
@@ -374,12 +379,33 @@ export class CodexAdapter implements Adapter {
     inherited.defaultEffort ??= this.defaultEfforts.get(inherited.model);
     this.overrides.set(threadId, { patch: { ...previous?.patch, ...patch }, inherited });
     this.saveConfig();
+    this.release(threadId);
     return this.configuration(threadId);
   }
+
+  /** Drop our subscription so app-server unloads the idle thread and frees its writer lock. */
+  private release(threadId: string): void {
+    const rpc = this.rpc;
+    if (!rpc?.alive || !this.loaded.has(threadId) || this.activeTurn.has(threadId)) return;
+    this.loaded.delete(threadId);
+    // Older app-servers without thread/unsubscribe just keep the thread loaded.
+    const done: Promise<void> = rpc.request("thread/unsubscribe", { threadId }).then(() => undefined, () => undefined)
+      .finally(() => { if (this.releasing.get(threadId) === done) this.releasing.delete(threadId); });
+    this.releasing.set(threadId, done);
+  }
+
   private async ensureLoaded(threadId: string): Promise<LineRpc> {
+    await this.releasing.get(threadId);
     const rpc = await this.connection();
     if (!this.loaded.has(threadId)) {
-      const result = await rpc.request("thread/resume", { threadId, excludeTurns: true });
+      let result: Json;
+      try {
+        result = await rpc.request("thread/resume", { threadId, excludeTurns: true });
+      } catch (error) {
+        const message = (error as Error).message ?? "";
+        if (!message.includes("already has an active writer")) throw error;
+        throw Object.assign(new Error(`该会话正被其他 Codex 进程（通常是 Codex 桌面 App）加载，暂时无法从这里写入。请在桌面 App 中退出后重试，或新建会话。\n原生错误：${message}`), { status: 409 });
+      }
       this.captureConfig(threadId, result);
       this.loaded.add(threadId);
     }
@@ -467,6 +493,7 @@ export class CodexAdapter implements Adapter {
         this.finishTools(threadId, "回合已结束，工具未返回结果");
         this.activeTurn.delete(threadId);
         this.hub.status(key, "idle");
+        this.release(threadId);
         const turn = params.turn as Json;
         if (turn?.status === "failed") {
           this.hub.item(key, { id: `${turn.id}:error`, kind: "error", text: errorText(turn.error, "Codex 回合失败"), ts: Date.now() });
