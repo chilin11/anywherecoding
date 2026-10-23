@@ -146,3 +146,60 @@ test("PI rename and delete use the native control operations and refuse running 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("PI messages sent while running steer the turn, then queue, then explain an old desktop", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aw-pi-steer-"));
+  const calls: { op: string; args: any }[] = [];
+  let running = true;
+  let exposed = new Set(["agent/steer", "agent/queue/push"]);
+  let steerEnded = false;
+  const server = createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString());
+    res.setHeader("content-type", "application/json");
+    if (body.method === "notifications/initialized") { res.writeHead(202); res.end(); return; }
+    if (body.method === "initialize") { res.setHeader("mcp-session-id", "s"); res.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: {} })); return; }
+    const op = body.params.arguments.operation;
+    const args = body.params.arguments.args;
+    calls.push({ op, args });
+    const fail = (code: string, message: string) => res.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { isError: true, structuredContent: { error: { code, message } } } }));
+    const ok = (value: any) => res.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { structuredContent: { operation: op, result: value } } }));
+    if ((op === "agent/steer" || op === "agent/queue/push") && !exposed.has(op)) return fail("NOT_FOUND", `operation is not exposed: ${op}`);
+    if (op === "agent/steer" && steerEnded) return fail("TURN_NOT_FOUND", "The target turn has ended");
+    if (op === "agent/getStatus") return ok({ status: { isRunning: running, currentTurnId: "turn-7" } });
+    if (op === "agent/prompt") return running ? fail("AGENT_BUSY", "session already has an active turn") : ok({ accepted: true });
+    if (op === "agent/steer") return ok({ accepted: true, turnId: "turn-7" });
+    if (op === "agent/queue/push") return ok({ turnId: "q1" });
+    if (op === "session/get") return ok({ session: { messages: [] } });
+    if (op === "agent/pendingInteractive") return ok({ asks: [], permissions: [] });
+    return fail("INTERNAL", `unexpected ${op}`);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
+  writeFileSync(join(dir, "mcp-control.json"), JSON.stringify({ active: true, url: `http://127.0.0.1:${port}`, token: "t" }));
+  const adapter = new PiAdapter(new Hub(), dir);
+  const ops = () => calls.map((call) => call.op).filter((op) => op !== "session/get" && op !== "agent/pendingInteractive");
+  try {
+    await adapter.send("one", "more");
+    assert.deepEqual(ops(), ["agent/getStatus", "agent/steer"]);
+    assert.deepEqual(calls[1].args, [{ sessionId: "one", content: "more", expectedTurnId: "turn-7" }]);
+    calls.length = 0;
+    steerEnded = true;
+    await adapter.send("one", "late");
+    assert.deepEqual(ops(), ["agent/getStatus", "agent/steer", "agent/queue/push"]);
+    calls.length = 0;
+    steerEnded = false;
+    exposed = new Set();
+    await assert.rejects(adapter.send("one", "x"), (error: any) => error.status === 409 && /agent\/steer/.test(error.message));
+    calls.length = 0;
+    // Idle sessions still use a normal prompt.
+    running = false;
+    await adapter.send("one", "hi");
+    assert.deepEqual(ops(), ["agent/getStatus", "agent/prompt"]);
+  } finally {
+    await adapter.stop();
+    server.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

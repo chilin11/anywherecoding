@@ -34,7 +34,7 @@ function SessionRow({ relay, session, active, onOpen, onDeleted, pinned }: { rel
   return (
     <div
       className={cx(
-        "group relative flex min-h-10 items-center rounded-lg",
+        "group relative flex items-center rounded-md", isTouch ? "min-h-10" : "min-h-8",
         active ? "bg-zinc-200 dark:bg-zinc-800" : "hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60",
       )}
     >
@@ -43,7 +43,8 @@ function SessionRow({ relay, session, active, onOpen, onDeleted, pinned }: { rel
         aria-current={active ? "page" : undefined}
         title={`${AGENT_META[session.agent].label} · ${session.title}${session.cwd ? `\n${shortPath(session.cwd)}` : ""}`}
         className={cx(
-          "flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-lg py-2 pl-6 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
+          "flex min-w-0 flex-1 items-center gap-2 rounded-md pl-6 text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
+          isTouch ? "min-h-10 py-2" : "min-h-8 py-1",
           isTouch ? "pr-10" : "pr-2",
           active ? "font-medium" : "text-zinc-700 dark:text-zinc-300",
         )}
@@ -57,7 +58,7 @@ function SessionRow({ relay, session, active, onOpen, onDeleted, pinned }: { rel
         <span className={cx("shrink-0 text-[11px] font-normal text-zinc-400", !isTouch && "group-focus-within:invisible group-hover:invisible")}>{relativeTime(session.updatedAt)}</span>
       </button>
       <div className={cx("absolute top-1/2 right-1 -translate-y-1/2", !isTouch && "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 has-[[aria-expanded=true]]:opacity-100")}>
-        <SessionMenu relay={relay} session={session} onDeleted={() => onDeleted(session.id)} className="size-8" />
+        <SessionMenu relay={relay} session={session} onDeleted={() => onDeleted(session.id)} className={isTouch ? "size-8" : "size-7"} />
       </div>
     </div>
   );
@@ -182,8 +183,8 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
 
       <nav className="scroll-thin min-h-0 flex-1 overflow-y-auto border-t border-zinc-200 px-2 pb-2 dark:border-zinc-800" aria-label="会话">
         {pinned.length > 0 && (
-          <div className="mb-1">
-            <div className="sticky top-0 z-10 flex min-h-8 items-center gap-1.5 bg-zinc-50 px-2 pt-2 text-xs font-semibold text-zinc-600 dark:bg-zinc-950 dark:text-zinc-400">
+          <div className="mb-0.5">
+            <div className="sticky top-0 z-10 flex min-h-7 items-center gap-1.5 bg-zinc-50 px-2 pt-1 text-xs font-semibold text-zinc-600 dark:bg-zinc-950 dark:text-zinc-400">
               <span aria-hidden="true" className="text-amber-500">★</span>置顶
               <span className="ml-auto font-normal text-zinc-400">{pinned.length}</span>
             </div>
@@ -193,14 +194,14 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
         {groups.map(([cwd, sessions]) => {
           const isCollapsed = collapsed[cwd];
           return (
-            <div key={cwd || "-"} className="mb-1">
-              <div className="sticky top-0 z-10 flex items-center gap-1 bg-zinc-50 pt-2 dark:bg-zinc-950">
+            <div key={cwd || "-"} className="mb-0.5">
+              <div className="sticky top-0 z-10 flex items-center gap-1 bg-zinc-50 pt-1 dark:bg-zinc-950">
                 <button
                   onClick={() => setCollapsed((all) => ({ ...all, [cwd]: !isCollapsed }))}
                   title={shortPath(cwd)}
                   aria-expanded={!isCollapsed}
                   aria-label={`${isCollapsed ? "展开" : "收起"}项目 ${basename(cwd)}`}
-                  className="flex min-h-8 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-xs font-semibold text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+                  className="flex min-h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-xs font-semibold text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
                 >
                   <span aria-hidden="true" className={cx("inline-block text-zinc-400 transition-transform", isCollapsed ? "-rotate-90" : "")}>▾</span>
                   <span aria-hidden="true">📁</span>
@@ -211,7 +212,7 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
                   onClick={() => onNew(cwd, filter === "all" ? sessions.find((session) => session.id === activeId)?.agent ?? sessions[0]?.agent : filter)}
                   aria-label={`在项目 ${basename(cwd)} 中新建会话`}
                   title={`在 ${shortPath(cwd)} 中新建会话`}
-                  className="flex size-8 shrink-0 items-center justify-center rounded-md text-lg text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                  className="flex size-7 shrink-0 items-center justify-center rounded-md text-base text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
                 >＋</button>}
               </div>
               {!isCollapsed && sessions.map((session) => <SessionRow key={session.id} relay={relay} session={session} active={activeId === session.id} onOpen={onOpen} onDeleted={onDeleted} />)}

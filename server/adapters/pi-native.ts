@@ -8,6 +8,7 @@ import type { AgentAvailability, ApprovalAnswer, History, Item, SessionSummary, 
 import { invalidConfig, type SessionConfig, type SessionConfigPatch } from "../session-config.ts";
 import { diffStats, extractImages } from "../artifacts.ts";
 import { moveToTrash } from "../trash.ts";
+import { formatArgs } from "../util.ts";
 
 type Json = Record<string, any>;
 const TIMEOUT = 20_000;
@@ -182,7 +183,7 @@ function messageId(message: Json, counts: Map<string, number>): string {
 function toolItem(call: Json, result?: Json, durationMs?: number): Item {
   const args = call.arguments ?? {}, details = result?.details ?? {};
   const tool: ToolInfo = {
-    name: call.name ?? result?.toolName ?? "tool", input: JSON.stringify(args),
+    name: call.name ?? result?.toolName ?? "tool", input: formatArgs(args),
     output: text(result?.content), status: result ? result.isError ? "error" : "ok" : "running",
     ...(typeof durationMs === "number" ? { durationMs } : {}),
     ...(typeof details.exitCode === "number" ? { exitCode: details.exitCode } : {}),

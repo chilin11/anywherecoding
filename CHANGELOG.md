@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v0.2.2
+
+- Codex: a thread whose writer lock is held by the Codex desktop app no longer fails with `already has an active writer`. The message is handed to the desktop window that owns the thread over the desktop's local IPC (start, steer while running, stop), and the web mirrors the thread's rollout live. Threads opened in the desktop now also update live in the web while the desktop runs them. When no window owns the thread, the error names the process holding the lock.
+- PI-Desktop: sending while a turn runs steers that turn (`agent/steer`), or queues the message when the turn just ended (`agent/queue/push`), instead of failing. Needs a PI-Desktop build that exposes these operations; older builds get a clear 409.
+- Denser, IDE-like transcript: tighter markdown spacing, one-line tool rows with inline arguments, compact user messages, smaller images, overlay copy button, denser session list on desktop.
+- Tool arguments render as `key: value` with real line breaks instead of JSON with literal `\n`; Codex MCP results show their text content.
+
 ## v0.2.1
 
 - Codex: release the thread writer lock (Codex ≥0.163) as soon as a web turn finishes, so the Codex desktop app can keep working on the same thread while staying open. A thread still held by another Codex process now shows a clear 409 message instead of `already has an active writer`.

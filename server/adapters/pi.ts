@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Adapter, Hub } from "../hub.ts";
 import { sessionKey } from "../hub.ts";
 import type { AgentAvailability, Approval, ApprovalAnswer, History, Item, SessionSummary, ToolInfo } from "../types.ts";
-import { asText, clip } from "../util.ts";
+import { asText, clip, formatArgs } from "../util.ts";
 import { invalidConfig, validateConfigPatch, type ModelOption, type SessionConfig, type SessionConfigPatch } from "../session-config.ts";
 import { extractImages } from "../artifacts.ts";
 
@@ -106,7 +106,7 @@ function piToolInput(args: unknown): string {
     if (typeof value.path === "string" && typeof value.content !== "string") return value.path;
     if (typeof value.file_path === "string") return value.file_path;
   }
-  return asText(args);
+  return formatArgs(args);
 }
 
 /** Map a PI-Desktop UiMessage to one or two relay items (thinking is split out). */
@@ -173,6 +173,8 @@ export class PiAdapter implements Adapter {
   private polling = false;
   /** null until probed on the current desktop launch. */
   private pendingSupported: boolean | null = null;
+  /** Whether this PI-Desktop exposes agent/steer over its control plane (unknown until tried). */
+  private steerSupported: boolean | null = null;
   private catalogCache: { until: number; models: ModelOption[] } | null = null;
   private statusesUntil = 0;
   private readonly observedStatuses = new Map<string, boolean>();
@@ -203,6 +205,7 @@ export class PiAdapter implements Adapter {
     if (!this.control || this.control.url !== info.url) {
       this.control = new PiControl(info.url, info.token);
       this.pendingSupported = null;
+      this.steerSupported = null;
       this.catalogCache = null;
     }
     return this.control;
@@ -382,10 +385,46 @@ export class PiAdapter implements Adapter {
   }
 
   async send(sessionId: string, text: string): Promise<void> {
-    await this.invoke("agent/prompt", [{ sessionId, content: text }]);
+    const status = (await this.invoke("agent/getStatus", [sessionId]).catch(() => null))?.status;
+    if (status?.isRunning) await this.addToRunningTurn(sessionId, text, status.currentTurnId);
+    else {
+      try {
+        await this.invoke("agent/prompt", [{ sessionId, content: text }]);
+      } catch (error) {
+        // The turn started between the status read and the prompt.
+        if ((error as McpError).code !== "AGENT_BUSY" && !/active turn/i.test((error as Error).message)) throw error;
+        const fresh = (await this.invoke("agent/getStatus", [sessionId]))?.status;
+        await this.addToRunningTurn(sessionId, text, fresh?.currentTurnId);
+      }
+    }
     this.watch(sessionId);
     this.watched.get(sessionId)!.running = true;
     this.hub.status(sessionKey(this.agent, sessionId), "running");
+  }
+
+  /**
+   * A message sent while PI runs steers the running turn (like the desktop's "steer now");
+   * if that turn just ended or steering is unavailable it is queued as the next turn.
+   */
+  private async addToRunningTurn(sessionId: string, text: string, turnId: string | undefined): Promise<void> {
+    if (turnId && this.steerSupported !== false) {
+      try {
+        await this.invoke("agent/steer", [{ sessionId, content: text, expectedTurnId: turnId }]);
+        this.steerSupported = true;
+        return;
+      } catch (error) {
+        const code = (error as McpError).code;
+        if (code === "NOT_FOUND" && /not exposed/.test((error as Error).message)) this.steerSupported = false;
+        else if (code !== "TURN_NOT_FOUND" && !/turn has ended/i.test((error as Error).message)) throw error;
+      }
+    }
+    try {
+      await this.invoke("agent/queue/push", [{ sessionId, content: text }]);
+      this.hub.notice("info", "PI 当前回合结束后会自动发送这条消息（已加入队列）。", sessionKey(this.agent, sessionId));
+    } catch (error) {
+      if ((error as McpError).code !== "NOT_FOUND" || !/not exposed/.test((error as Error).message)) throw error;
+      throw Object.assign(new Error("PI 正在运行，当前 PI-Desktop 版本未开放运行中追加消息（agent/steer）。请更新 PI-Desktop fork，或先停止当前回合。"), { status: 409 });
+    }
   }
 
   async create(cwd: string, text: string, config?: SessionConfigPatch): Promise<string> {

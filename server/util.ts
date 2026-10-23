@@ -21,6 +21,24 @@ export function asText(value: unknown): string {
   }
 }
 
+/**
+ * Tool arguments for display: `key: value` lines with real newlines instead of a JSON
+ * string full of literal "\n" escapes; multi-line values are indented under their key.
+ */
+export function formatArgs(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value !== "object" || Array.isArray(value)) return asText(value);
+  const lines: string[] = [];
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (entry === undefined) continue;
+    const text = typeof entry === "string" ? entry : JSON.stringify(entry);
+    if (text.includes("\n")) lines.push(`${key}:`, ...text.split("\n").map((line) => `  ${line}`));
+    else lines.push(`${key}: ${text}`);
+  }
+  return lines.join("\n");
+}
+
 export function firstLine(text: string, max = 80): string {
   const line = text.trim().split("\n").find((part) => part.trim()) ?? "";
   return line.length > max ? `${line.slice(0, max)}…` : line;

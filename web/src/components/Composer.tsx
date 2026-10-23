@@ -73,7 +73,7 @@ export function Composer({ placeholder, running, disabled, onSend, onStop, draft
 
   const canSend = Boolean(text.trim()) && !sending && !disabled;
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm focus-within:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-800/60 dark:focus-within:border-zinc-500">
+    <div className="rounded-xl border border-zinc-200 bg-white shadow-sm focus-within:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-800/60 dark:focus-within:border-zinc-500">
       <textarea
         ref={ref}
         rows={1}
@@ -84,13 +84,13 @@ export function Composer({ placeholder, running, disabled, onSend, onStop, draft
         placeholder={placeholder}
         enterKeyHint={isTouch ? "enter" : "send"}
         aria-label={placeholder}
-        className="scroll-thin block max-h-60 min-h-11 w-full resize-none bg-transparent px-3.5 pt-2.5 pb-1 text-base leading-6 outline-none placeholder:text-zinc-400 disabled:opacity-50 sm:text-[15px]"
+        className="scroll-thin block max-h-60 min-h-10 w-full resize-none bg-transparent px-3 pt-2 pb-0.5 text-base leading-6 outline-none placeholder:text-zinc-400 disabled:opacity-50 sm:text-sm"
       />
-      <div className="flex items-center gap-2 px-1.5 pb-1.5">
+      <div className="flex items-center gap-2 px-1.5 pb-1">
         <div className="min-w-0 flex-1">{toolbar}</div>
         {!isTouch && <span className="hidden shrink-0 text-[11px] text-zinc-400 lg:inline">Enter 发送 · Shift+Enter 换行</span>}
         {running && onStop && !text.trim() ? (
-          <button onClick={onStop} title="停止" aria-label="停止" className="flex size-9 shrink-0 items-center justify-center rounded-full bg-zinc-900 hover:bg-zinc-700 dark:bg-zinc-100 dark:hover:bg-zinc-300">
+          <button onClick={onStop} title="停止" aria-label="停止" className="flex size-8 shrink-0 items-center justify-center rounded-full bg-zinc-900 hover:bg-zinc-700 dark:bg-zinc-100 dark:hover:bg-zinc-300">
             <span className="size-3 rounded-sm bg-white dark:bg-zinc-900" />
           </button>
         ) : (
@@ -99,7 +99,7 @@ export function Composer({ placeholder, running, disabled, onSend, onStop, draft
             disabled={!canSend}
             title={running ? "追加消息" : "发送"}
             aria-label={running ? "追加消息" : "发送"}
-            className="flex size-9 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-lg text-white hover:bg-zinc-700 disabled:bg-zinc-300 disabled:text-white dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300 dark:disabled:bg-zinc-700 dark:disabled:text-zinc-500"
+            className="flex size-8 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-base text-white hover:bg-zinc-700 disabled:bg-zinc-300 disabled:text-white dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300 dark:disabled:bg-zinc-700 dark:disabled:text-zinc-500"
           >
             {sending ? <span className="size-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" /> : "↑"}
           </button>

@@ -1,13 +1,52 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { validateConfigPatch, type SessionConfig, type SessionConfigPatch } from "../session-config.ts";
 import type { Adapter, Hub } from "../hub.ts";
 import { sessionKey } from "../hub.ts";
 import type { AgentAvailability, Approval, ApprovalAnswer, History, Item, SessionSummary, ToolInfo } from "../types.ts";
-import { asText, clip, findBin, firstLine, LineRpc } from "../util.ts";
+import { asText, clip, findBin, firstLine, formatArgs, LineRpc } from "../util.ts";
 import { diffStats, extractImages } from "../artifacts.ts";
 import { errorText } from "../errors.ts";
+import { CodexDesktopIpc } from "./codex-ipc.ts";
+
+const TERMINAL_TURN = new Set(["completed", "failed", "interrupted", "cancelled", "canceled"]);
+/** How long a send routed to the desktop may take before its turn shows up in the rollout. */
+const ROUTED_GRACE_MS = 45_000;
+
+/** A thread written by another process (the desktop app) that we mirror from its rollout. */
+type Follow = {
+  owner: string | null;
+  turnId: string | null;
+  running: boolean;
+  /** Latest turn id before a routed send, and when it was sent; covers the gap before the new turn is persisted. */
+  baseline: { turnId: string | null; at: number } | null;
+  seen: Map<string, string>;
+  until: number;
+  timer: NodeJS.Timeout | null;
+  polling: boolean;
+  told: boolean;
+  /** Rollout file and its last mirrored mtime: an unchanged rollout needs no re-read. */
+  path: string | null | undefined;
+  mtime: number;
+};
+
+function execText(bin: string, args: string[]): Promise<string> {
+  return new Promise((resolve) => execFile(bin, args, { timeout: 3000 }, (_error, stdout) => resolve(String(stdout ?? ""))));
+}
+
+/** Describe the process holding a thread's writer lock (`lsof` + parent command). */
+export async function lockHolder(threadId: string): Promise<{ desktop: boolean; text: string } | null> {
+  const lock = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "thread-writer-locks", `${threadId}.lock`);
+  const pid = (await execText("lsof", ["-t", lock])).split(/\s+/).find((value) => /^\d+$/.test(value) && Number(value) !== process.pid);
+  if (!pid) return null;
+  const [ppid = "", ...command] = (await execText("ps", ["-o", "ppid=,command=", "-p", pid])).trim().split(/\s+/);
+  const parent = /^\d+$/.test(ppid) ? (await execText("ps", ["-o", "command=", "-p", ppid])).trim() : "";
+  const desktop = /ChatGPT\.app|Codex\.app/.test(parent) && !/anywherecoding|node_repl/i.test(parent);
+  const name = desktop ? "Codex 桌面 App" : command.join(" ").includes("app-server") ? `其他 Codex app-server（父进程：${parent.split("/").pop() || ppid}）` : command[0]?.split("/").pop() ?? "codex";
+  return { desktop, text: `${name}，pid ${pid}` };
+}
 
 const CODEX_FALLBACKS = ["/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"];
 
@@ -52,6 +91,19 @@ function toolMetrics(item: Json): Pick<ToolInfo, "exitCode" | "durationMs"> {
   };
 }
 
+/** MCP results as their text content instead of a JSON envelope full of escapes. */
+function mcpResultText(item: Json): string {
+  if (item.error) return typeof item.error?.message === "string" ? item.error.message : asText(item.error);
+  const content = item.result?.content;
+  if (Array.isArray(content)) {
+    const text = content.filter((part: Json) => part?.type === "text" && typeof part.text === "string").map((part: Json) => part.text).join("\n");
+    if (text) return text;
+    if (item.result.structuredContent != null) return asText(item.result.structuredContent);
+    if (content.length && content.every((part: Json) => part?.type === "image")) return "";
+  }
+  return asText(item.result);
+}
+
 /** Map one native Codex ThreadItem, including empty terminal tool results. */
 export function mapCodexItem(item: Json, ts?: number): Item | null {
   const base = { id: String(item.id), ...(ts != null ? { ts } : {}) };
@@ -87,10 +139,10 @@ export function mapCodexItem(item: Json, ts?: number): Item | null {
         additions: files.reduce((sum, file) => sum + file.additions, 0), deletions: files.reduce((sum, file) => sum + file.deletions, 0) });
     }
     case "mcpToolCall":
-      return toolItem({ name: `${item.server}.${item.tool}`, input: clip(asText(item.arguments)), output: clip(asText(item.error ?? item.result)),
+      return toolItem({ name: `${item.server}.${item.tool}`, input: clip(formatArgs(item.arguments)), output: clip(mcpResultText(item)),
         status: item.error || item.result?.isError ? "error" : toolStatus(item.status) }, item.result);
     case "dynamicToolCall":
-      return toolItem({ name: item.tool ?? item.name ?? "tool", input: clip(asText(item.arguments)),
+      return toolItem({ name: item.tool ?? item.name ?? "tool", input: clip(formatArgs(item.arguments)),
         output: clip(item.contentItems ? item.contentItems.filter((part: Json) => part.type === "inputText").map((part: Json) => part.text).join("\n") : asText(item.result)),
         status: item.success === false ? "error" : toolStatus(item.status) }, item.contentItems ?? item.result);
     case "webSearch":
@@ -138,9 +190,13 @@ export class CodexAdapter implements Adapter {
   private readonly nativeConfig = new Map<string, Json>();
   private readonly defaultEfforts = new Map<string, string>();
   private readonly tokenUsage = new Map<string, SessionConfig["context"]>();
+  /** Desktop app IPC: route turns to the window that owns a thread instead of stealing its writer lock. */
+  private readonly ipc: CodexDesktopIpc;
+  private readonly follows = new Map<string, Follow>();
 
-  constructor(hub: Hub, bin?: string) {
+  constructor(hub: Hub, bin?: string, ipc: CodexDesktopIpc = new CodexDesktopIpc()) {
     this.hub = hub;
+    this.ipc = ipc;
     this.bin = findBin("codex", bin, CODEX_FALLBACKS);
     try {
       const saved = JSON.parse(readFileSync(this.configPath, "utf8"));
@@ -164,6 +220,9 @@ export class CodexAdapter implements Adapter {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    for (const follow of this.follows.values()) if (follow.timer) clearTimeout(follow.timer);
+    this.follows.clear();
+    this.ipc.close();
     this.rpc?.kill();
   }
 
@@ -372,7 +431,12 @@ export class CodexAdapter implements Adapter {
     if (busy()) throw Object.assign(new Error("Codex 正在运行，请先停止当前回合"), { status: 409 });
     if (this.nativeConfig.get(threadId)?.active) throw Object.assign(new Error("Codex 正在运行，请先停止当前回合"), { status: 409 });
     // Resume without overrides once to capture the exact native permission policy.
-    await this.ensureLoaded(threadId);
+    try {
+      await this.ensureLoaded(threadId);
+    } catch (error) {
+      if (!(error as Json).lockHeld) throw error;
+      throw Object.assign(new Error(`该会话由 Codex 桌面 App 持有写入锁，网页暂不能修改它的设置；请在桌面 App 中修改，或退出桌面 App 后重试。\n原生错误：${(error as Error).message}`), { status: 409 });
+    }
     if (busy()) throw Object.assign(new Error("Codex 正在运行，请先停止当前回合"), { status: 409 });
     const previous = this.overrides.get(threadId);
     const inherited = previous?.inherited ?? { ...this.nativeConfig.get(threadId) };
@@ -404,19 +468,175 @@ export class CodexAdapter implements Adapter {
       } catch (error) {
         const message = (error as Error).message ?? "";
         if (!message.includes("already has an active writer")) throw error;
-        throw Object.assign(new Error(`该会话正被其他 Codex 进程（通常是 Codex 桌面 App）加载，暂时无法从这里写入。请在桌面 App 中退出后重试，或新建会话。\n原生错误：${message}`), { status: 409 });
+        throw Object.assign(new Error(message), { status: 409, lockHeld: true });
       }
       this.captureConfig(threadId, result);
       this.loaded.add(threadId);
+      this.unfollow(threadId);
     }
     return rpc;
   }
 
+  /** 409 explaining who holds the writer lock and how to free it. */
+  private async lockError(threadId: string, native: string): Promise<Error> {
+    const holder = await lockHolder(threadId).catch(() => null);
+    const text = holder?.desktop || !holder
+      ? `该会话由 Codex 桌面 App 加载${holder ? `（${holder.text}）` : ""}，但桌面 App 当前没有窗口打开它，无法转交。请在 Codex 桌面 App 中打开这个会话（之后网页发送会自动交给桌面执行），或退出桌面 App 后重试。`
+      : `该会话正被其他 Codex 进程写入（${holder.text}），请等它结束或关闭后重试。`;
+    return Object.assign(new Error(`${text}\n原生错误：${native}`), { status: 409 });
+  }
+
   async send(threadId: string, text: string): Promise<void> {
-    const rpc = await this.ensureLoaded(threadId);
+    let rpc: LineRpc;
+    try {
+      rpc = await this.ensureLoaded(threadId);
+    } catch (error) {
+      if (!(error as Json).lockHeld) throw error;
+      return this.sendViaDesktop(threadId, text, (error as Error).message);
+    }
     // During an active turn app-server treats turn/start as input to that turn.
     const result = await rpc.request("turn/start", { threadId, ...this.turnConfig(threadId), input: [{ type: "text", text, text_elements: [] }] });
     if (result?.turn?.id) this.markTurn(threadId, result.turn.id);
+  }
+
+  /** Run `action` against the desktop window owning the thread, rediscovering once if it went away. */
+  private async withOwner<T>(threadId: string, native: string, action: (owner: string) => Promise<T>): Promise<T> {
+    const follow = this.follow(threadId);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const owner = (attempt === 0 ? follow.owner : null) ?? await this.ipc.findOwner(threadId);
+      if (!owner) break;
+      follow.owner = owner;
+      try {
+        return await action(owner);
+      } catch (error) {
+        if (!/client-not-found|no-client-found|client-disconnected|连接已关闭/.test((error as Error).message) || attempt) throw error;
+        follow.owner = null;
+      }
+    }
+    throw await this.lockError(threadId, native);
+  }
+
+  private async latestTurn(threadId: string): Promise<Json | null> {
+    const rpc = await this.connection();
+    const result = await rpc.request("thread/turns/list", { threadId, limit: 1, itemsView: "notLoaded", sortDirection: "desc" });
+    return (result.data as Json[])[0] ?? null;
+  }
+
+  /**
+   * The desktop app owns this thread's writer lock. Hand the message to its window over
+   * the desktop IPC (as a second desktop window would): steer the running turn, or start
+   * a new one, then mirror the rollout until it finishes.
+   */
+  private async sendViaDesktop(threadId: string, text: string, native: string): Promise<void> {
+    const latest = await this.latestTurn(threadId).catch(() => null);
+    const running = latest != null && !TERMINAL_TURN.has(latest.status);
+    await this.withOwner(threadId, native, async (owner) => {
+      if (running) {
+        try {
+          await this.ipc.steerTurn(owner, threadId, text);
+          return;
+        } catch (error) {
+          // The turn may have just ended: start a new one. A timeout may already have
+          // delivered the steer, so never resend it as a new turn.
+          if (/timeout|client-not-found|no-client-found|client-disconnected|连接已关闭/i.test((error as Error).message)) throw error;
+        }
+      }
+      await this.ipc.startTurn(owner, threadId, text);
+    });
+    const follow = this.follow(threadId);
+    follow.baseline = { turnId: running ? null : latest?.id ?? null, at: Date.now() };
+    follow.running = true;
+    follow.until = Math.max(follow.until, Date.now() + ROUTED_GRACE_MS);
+    this.hub.status(sessionKey(this.agent, threadId), "running");
+    if (!follow.told) {
+      follow.told = true;
+      this.hub.notice("info", "该会话由 Codex 桌面 App 持有，消息已交给桌面 App 执行；网页的模型/权限覆盖不生效，审批请在桌面 App 中处理。", sessionKey(this.agent, threadId));
+    }
+    this.schedule(threadId, 800);
+  }
+
+  private follow(threadId: string): Follow {
+    let follow = this.follows.get(threadId);
+    if (!follow) {
+      follow = { owner: null, turnId: null, running: false, baseline: null, seen: new Map(), until: 0, timer: null, polling: false, told: false, path: undefined, mtime: 0 };
+      this.follows.set(threadId, follow);
+    }
+    return follow;
+  }
+
+  private unfollow(threadId: string): void {
+    const follow = this.follows.get(threadId);
+    if (!follow) return;
+    if (follow.timer) clearTimeout(follow.timer);
+    this.follows.delete(threadId);
+  }
+
+  private schedule(threadId: string, delay: number): void {
+    const follow = this.follows.get(threadId);
+    if (!follow || this.stopped) return;
+    if (follow.timer) clearTimeout(follow.timer);
+    follow.timer = setTimeout(() => { follow.timer = null; void this.pollFollow(threadId); }, delay);
+  }
+
+  /** Mirror a thread another process writes: new/changed items and the latest turn's state. */
+  private async pollFollow(threadId: string): Promise<void> {
+    const follow = this.follows.get(threadId);
+    if (!follow || follow.polling || this.stopped) return;
+    if (this.loaded.has(threadId)) { this.unfollow(threadId); return; }
+    follow.polling = true;
+    try {
+      await this.mirror(threadId, follow);
+    } catch {
+      // The next poll retries; a vanished thread simply stops being followed below.
+    } finally {
+      follow.polling = false;
+    }
+    if (follow.running || Date.now() < follow.until) this.schedule(threadId, follow.running ? 1500 : 4000);
+    else this.unfollow(threadId);
+  }
+
+  private async mirror(threadId: string, follow: Follow): Promise<void> {
+    const key = sessionKey(this.agent, threadId);
+    const rpc = await this.connection();
+    if (follow.path === undefined) {
+      follow.path = await rpc.request("thread/read", { threadId, includeTurns: false }).then((result: Json) => result?.thread?.path ?? null, () => null);
+    }
+    let mtime = 0;
+    try { mtime = follow.path ? statSync(follow.path).mtimeMs : 0; } catch { /* rotated or missing: re-read */ }
+    if (mtime && mtime === follow.mtime && !follow.baseline) return;
+    const result = await rpc.request("thread/turns/list", { threadId, limit: 2, itemsView: "full", sortDirection: "desc" });
+    follow.mtime = mtime;
+    const turns = [...(result.data as Json[])].reverse();
+    for (const turn of turns) {
+      const ts = turn.startedAt ? turn.startedAt * 1000 : undefined;
+      const items = (turn.items ?? []).map((raw: Json) => mapCodexItem(raw, ts)).filter(Boolean) as Item[];
+      if (turn.status === "failed") items.push({ id: `${turn.id}:error`, kind: "error", text: errorText(turn.error, "Codex 回合失败") });
+      for (const item of items) {
+        const mark = JSON.stringify(item);
+        if (follow.seen.get(item.id) === mark) continue;
+        follow.seen.set(item.id, mark);
+        this.hub.item(key, item);
+      }
+    }
+    const latest = turns.at(-1);
+    let running = latest != null && !TERMINAL_TURN.has(latest.status);
+    if (running) { follow.turnId = latest!.id; follow.baseline = null; }
+    else if (follow.baseline) {
+      // A routed send whose turn is not persisted yet still counts as running.
+      if ((latest?.id ?? null) === follow.baseline.turnId && Date.now() - follow.baseline.at < ROUTED_GRACE_MS) running = true;
+      else follow.baseline = null;
+    }
+    if (running !== follow.running || running) this.hub.status(key, running ? "running" : "idle");
+    if (follow.running && !running) this.hub.sessionsChanged();
+    follow.running = running;
+  }
+
+  /** A client is viewing the thread: mirror it if another process (the desktop app) writes it. */
+  watch(threadId: string): void {
+    if (this.loaded.has(threadId)) return;
+    const follow = this.follow(threadId);
+    follow.until = Math.max(follow.until, Date.now() + 75_000);
+    if (!follow.timer && !follow.polling) void this.pollFollow(threadId);
   }
 
   async create(cwd: string, text: string, config: SessionConfigPatch = {}): Promise<string> {
@@ -441,9 +661,15 @@ export class CodexAdapter implements Adapter {
 
   async interrupt(threadId: string): Promise<void> {
     const turnId = this.activeTurn.get(threadId);
-    if (!turnId) throw new Error("没有正在运行的回合");
-    const rpc = await this.connection();
-    await rpc.request("turn/interrupt", { threadId, turnId });
+    if (turnId && this.loaded.has(threadId)) {
+      const rpc = await this.connection();
+      await rpc.request("turn/interrupt", { threadId, turnId });
+      return;
+    }
+    const follow = this.follows.get(threadId);
+    if (!follow?.running) throw new Error("没有正在运行的回合");
+    await this.withOwner(threadId, "thread is written by another Codex process", (owner) => this.ipc.interruptTurn(owner, threadId, follow.turnId));
+    this.schedule(threadId, 500);
   }
 
   async rename(threadId: string, title: string): Promise<void> {

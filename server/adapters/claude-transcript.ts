@@ -1,7 +1,7 @@
 // Parsing of Claude Code's own session files (~/.claude/projects/<dir>/<id>.jsonl).
 import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import type { Item, ToolInfo } from "../types.ts";
-import { asText, clip } from "../util.ts";
+import { asText, clip, formatArgs } from "../util.ts";
 import { extractImages, textLineCount } from "../artifacts.ts";
 import { errorText } from "../errors.ts";
 
@@ -26,7 +26,7 @@ export function toolInput(name: string, input: Json | undefined): string {
   if (typeof input.pattern === "string") return `${input.pattern}${input.path ? `  in ${input.path}` : ""}`;
   if (typeof input.url === "string") return input.url;
   if (typeof input.description === "string" && typeof input.prompt === "string") return `${input.description}\n\n${input.prompt}`;
-  return asText(input);
+  return formatArgs(input);
 }
 
 export function toolResultText(content: unknown): string {

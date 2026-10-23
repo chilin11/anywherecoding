@@ -12,7 +12,7 @@ import { SessionStatusIcon } from "./SessionStatus.tsx";
 import { SessionMenu } from "./SessionMenu.tsx";
 
 const DESKTOP_HINT: Record<string, string> = {
-  codex: "Codex 桌面版里已打开的同一会话不会实时刷新，回到电脑后重新打开即可。避免两边同时发消息。",
+  codex: "Codex 桌面 App 正打开的会话：网页消息会交给桌面 App 执行并同步显示；审批需在桌面处理。",
   claude: "Claude 桌面版里已打开的同一会话不会实时刷新，回到电脑后重新打开即可。避免两边同时发消息。",
 };
 
@@ -37,8 +37,9 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
     void relay.loadThread(session.id);
     stick.current = true;
     setAtBottom(true);
-    if (session.agent !== "pi") return;
-    // PI-Desktop is polled; keep the server watching while this page is open.
+    if (session.agent !== "pi" && session.agent !== "codex") return;
+    // PI-Desktop and desktop-owned Codex threads are polled; keep the server watching while this page is open.
+    if (session.agent === "codex") void api.watch(session.id).catch(() => undefined);
     const timer = setInterval(() => void api.watch(session.id).catch(() => undefined), 60_000);
     return () => clearInterval(timer);
   }, [session.id, session.agent, relay.loadThread]);
@@ -140,7 +141,7 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
 
       <div className="relative min-h-0 flex-1">
         <div ref={scroller} onScroll={onScroll} className="scroll-thin h-full overflow-y-auto overscroll-contain">
-          <div className="mx-auto max-w-3xl space-y-4 px-3 py-4 sm:px-4 sm:py-6">
+          <div className="mx-auto max-w-4xl space-y-1.5 px-3 py-3 sm:px-4">
             {thread?.before && (
               <div className="text-center text-xs text-zinc-400">{thread.loading ? "加载中…" : "上滑加载更早的消息"}</div>
             )}
@@ -149,8 +150,8 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
             {thread && !thread.loading && !thread.error && thread.items.length === 0 && <div className="py-10 text-center text-sm text-zinc-400">还没有消息</div>}
             {thread?.items.map((item) => <ItemView key={item.id} item={item} />)}
             {running && approvals.length === 0 && (
-              <div className="flex items-center gap-2 px-2 text-sm text-zinc-400">
-                <span className="size-2 animate-pulse rounded-full bg-blue-500" /> 正在处理…
+              <div className="flex items-center gap-2 px-1.5 text-xs text-zinc-400">
+                <span className="size-1.5 animate-pulse rounded-full bg-blue-500" /> 正在处理…
               </div>
             )}
           </div>
@@ -164,7 +165,7 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
         )}
       </div>
 
-      <div className="mx-auto w-full max-w-3xl space-y-2 px-2 pt-1 pb-[max(env(safe-area-inset-bottom),0.5rem)] sm:px-3 sm:pb-[max(env(safe-area-inset-bottom),0.75rem)]">
+      <div className="mx-auto w-full max-w-4xl space-y-1.5 px-2 pt-1 pb-[max(env(safe-area-inset-bottom),0.5rem)] sm:px-3">
         {approvals.length > 0 && (
           <div className="scroll-thin max-h-[55dvh] space-y-2 overflow-y-auto">
             {approvals.map((approval) => (
