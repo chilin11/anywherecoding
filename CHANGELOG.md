@@ -2,10 +2,14 @@
 
 ## Unreleased
 
+## v0.2.3
+
+- PI-Desktop: sending while a turn runs now also works on upstream PI-Desktop builds, which expose neither `agent/steer` nor the turn queue. The relay uses the desktop's own "Send now": a graceful `agent/stop` lets the current reply/tool batch finish, then the held message is sent as the next prompt (oldest first). A pending message shows in the transcript until it is sent. Builds with `agent/steer` still steer the running turn directly.
+
 ## v0.2.2
 
 - Codex: a thread whose writer lock is held by the Codex desktop app no longer fails with `already has an active writer`. The message is handed to the desktop window that owns the thread over the desktop's local IPC (start, steer while running, stop), and the web mirrors the thread's rollout live. Threads opened in the desktop now also update live in the web while the desktop runs them. When no window owns the thread, the error names the process holding the lock.
-- PI-Desktop: sending while a turn runs steers that turn (`agent/steer`), or queues the message when the turn just ended (`agent/queue/push`), instead of failing. Needs a PI-Desktop build that exposes these operations; older builds get a clear 409.
+- PI-Desktop: sending while a turn runs steers that turn (`agent/steer`), or queues the message when the turn just ended (`agent/queue/push`), instead of failing.
 - Denser, IDE-like transcript: tighter markdown spacing, one-line tool rows with inline arguments, compact user messages, smaller images, overlay copy button, denser session list on desktop.
 - Tool arguments render as `key: value` with real line breaks instead of JSON with literal `\n`; Codex MCP results show their text content.
 

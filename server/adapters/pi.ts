@@ -175,6 +175,10 @@ export class PiAdapter implements Adapter {
   private pendingSupported: boolean | null = null;
   /** Whether this PI-Desktop exposes agent/steer over its control plane (unknown until tried). */
   private steerSupported: boolean | null = null;
+  private queueSupported: boolean | null = null;
+  /** Messages waiting for a graceful stop on desktops without steering (sendAfterStep). */
+  private readonly outbox = new Map<string, { id: string; text: string }[]>();
+  private outboxSeq = 0;
   private catalogCache: { until: number; models: ModelOption[] } | null = null;
   private statusesUntil = 0;
   private readonly observedStatuses = new Map<string, boolean>();
@@ -206,6 +210,7 @@ export class PiAdapter implements Adapter {
       this.control = new PiControl(info.url, info.token);
       this.pendingSupported = null;
       this.steerSupported = null;
+      this.queueSupported = null;
       this.catalogCache = null;
     }
     return this.control;
@@ -386,7 +391,7 @@ export class PiAdapter implements Adapter {
 
   async send(sessionId: string, text: string): Promise<void> {
     const status = (await this.invoke("agent/getStatus", [sessionId]).catch(() => null))?.status;
-    if (status?.isRunning) await this.addToRunningTurn(sessionId, text, status.currentTurnId);
+    if (status?.isRunning || this.outbox.has(sessionId)) await this.addToRunningTurn(sessionId, text, status?.currentTurnId);
     else {
       try {
         await this.invoke("agent/prompt", [{ sessionId, content: text }]);
@@ -418,13 +423,59 @@ export class PiAdapter implements Adapter {
         else if (code !== "TURN_NOT_FOUND" && !/turn has ended/i.test((error as Error).message)) throw error;
       }
     }
-    try {
-      await this.invoke("agent/queue/push", [{ sessionId, content: text }]);
-      this.hub.notice("info", "PI 当前回合结束后会自动发送这条消息（已加入队列）。", sessionKey(this.agent, sessionId));
-    } catch (error) {
-      if ((error as McpError).code !== "NOT_FOUND" || !/not exposed/.test((error as Error).message)) throw error;
-      throw Object.assign(new Error("PI 正在运行，当前 PI-Desktop 版本未开放运行中追加消息（agent/steer）。请更新 PI-Desktop fork，或先停止当前回合。"), { status: 409 });
+    if (this.queueSupported !== false) {
+      try {
+        await this.invoke("agent/queue/push", [{ sessionId, content: text }]);
+        this.queueSupported = true;
+        this.hub.notice("info", "PI 当前回合结束后会自动发送这条消息（已加入队列）。", sessionKey(this.agent, sessionId));
+        return;
+      } catch (error) {
+        if ((error as McpError).code !== "NOT_FOUND" || !/not exposed/.test((error as Error).message)) throw error;
+        this.queueSupported = false;
+      }
     }
+    await this.sendAfterStep(sessionId, text, turnId);
+  }
+
+  /**
+   * Upstream PI-Desktop exposes neither steering nor its turn queue, but it does expose the
+   * desktop's own "Send now": a graceful agent/stop lets the current reply/tool batch finish
+   * and closes the turn normally; the message is then sent as the next prompt.
+   */
+  private async sendAfterStep(sessionId: string, text: string, turnId: string | undefined): Promise<void> {
+    const key = sessionKey(this.agent, sessionId);
+    const id = `pi-outbox:${sessionId}:${++this.outboxSeq}`;
+    const pending = this.outbox.get(sessionId) ?? [];
+    pending.push({ id, text });
+    this.outbox.set(sessionId, pending);
+    this.watch(sessionId);
+    this.watched.get(sessionId)!.running = true;
+    this.hub.item(key, { id, kind: "system", text: `⏳ 等当前步骤结束后发送：${text}`, ts: Date.now() });
+    // Native Pi sessions treat stop as abort; they only wait for the run to end.
+    if (!sessionId.startsWith("native-pi:")) {
+      await this.invoke("agent/stop", [{ sessionId, ...(turnId ? { turnId } : {}) }]).catch(() => undefined);
+    }
+  }
+
+  /** Send messages held by sendAfterStep once PI is idle, oldest first. */
+  private async drainOutbox(sessionId: string): Promise<boolean> {
+    const pending = this.outbox.get(sessionId);
+    const next = pending?.[0];
+    if (!next) return false;
+    const key = sessionKey(this.agent, sessionId);
+    try {
+      await this.invoke("agent/prompt", [{ sessionId, content: next.text }]);
+    } catch (error) {
+      // Busy again (e.g. a desktop prompt won the race): retry on the next poll.
+      if ((error as McpError).code === "AGENT_BUSY" || /active turn/i.test((error as Error).message)) return false;
+      pending!.shift();
+      this.hub.item(key, { id: next.id, kind: "error", text: `排队消息发送失败：${(error as Error).message}\n${next.text}`, ts: Date.now() });
+      return false;
+    }
+    pending!.shift();
+    if (!pending!.length) this.outbox.delete(sessionId);
+    this.hub.item(key, { id: next.id, kind: "system", text: "已发送排队消息", ts: Date.now() });
+    return true;
   }
 
   async create(cwd: string, text: string, config?: SessionConfigPatch): Promise<string> {
@@ -464,7 +515,7 @@ export class PiAdapter implements Adapter {
     try {
       const now = Date.now();
       for (const [sessionId, state] of [...this.watched]) {
-        if (state.until < now && !state.running) {
+        if (state.until < now && !state.running && !this.outbox.has(sessionId)) {
           this.watched.delete(sessionId);
           continue;
         }
@@ -480,7 +531,7 @@ export class PiAdapter implements Adapter {
   private async pollSession(sessionId: string, state: Watched): Promise<void> {
     const key = sessionKey(this.agent, sessionId);
     const status = await this.invoke("agent/getStatus", [sessionId]);
-    const running = Boolean(status?.status?.isRunning);
+    let running = Boolean(status?.status?.isRunning);
     const detail = await this.detail(sessionId, null, 30);
     if (this.stopped) return;
     for (const item of (detail?.messages ?? []).flatMap(mapPiMessage) as Item[]) {
@@ -490,6 +541,7 @@ export class PiAdapter implements Adapter {
       this.hub.item(key, item);
     }
     await this.pollPending(sessionId);
+    if (!running && await this.drainOutbox(sessionId)) running = true;
     if (state.running !== running) {
       state.running = running;
       this.hub.status(key, running ? "running" : "idle");

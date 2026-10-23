@@ -147,7 +147,7 @@ test("PI rename and delete use the native control operations and refuse running 
   }
 });
 
-test("PI messages sent while running steer the turn, then queue, then explain an old desktop", async () => {
+test("PI messages sent while running steer the turn, queue it, or use a graceful stop on upstream desktops", async () => {
   const dir = mkdtempSync(join(tmpdir(), "aw-pi-steer-"));
   const calls: { op: string; args: any }[] = [];
   let running = true;
@@ -160,6 +160,7 @@ test("PI messages sent while running steer the turn, then queue, then explain an
     res.setHeader("content-type", "application/json");
     if (body.method === "notifications/initialized") { res.writeHead(202); res.end(); return; }
     if (body.method === "initialize") { res.setHeader("mcp-session-id", "s"); res.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: {} })); return; }
+    if (body.params.name === "pi_session_get") { res.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { structuredContent: { session: { messages: [] } } } })); return; }
     const op = body.params.arguments.operation;
     const args = body.params.arguments.args;
     calls.push({ op, args });
@@ -171,6 +172,7 @@ test("PI messages sent while running steer the turn, then queue, then explain an
     if (op === "agent/prompt") return running ? fail("AGENT_BUSY", "session already has an active turn") : ok({ accepted: true });
     if (op === "agent/steer") return ok({ accepted: true, turnId: "turn-7" });
     if (op === "agent/queue/push") return ok({ turnId: "q1" });
+    if (op === "agent/stop") return ok({ requested: true });
     if (op === "session/get") return ok({ session: { messages: [] } });
     if (op === "agent/pendingInteractive") return ok({ asks: [], permissions: [] });
     return fail("INTERNAL", `unexpected ${op}`);
@@ -191,10 +193,22 @@ test("PI messages sent while running steer the turn, then queue, then explain an
     calls.length = 0;
     steerEnded = false;
     exposed = new Set();
-    await assert.rejects(adapter.send("one", "x"), (error: any) => error.status === 409 && /agent\/steer/.test(error.message));
+    // Upstream: no steer/queue, so stop gracefully after the current step and prompt once idle.
+    await adapter.send("one", "x");
+    assert.deepEqual(ops(), ["agent/getStatus", "agent/steer", "agent/queue/push", "agent/stop"]);
+    assert.deepEqual(calls.at(-1)!.args, [{ sessionId: "one", turnId: "turn-7" }]);
     calls.length = 0;
-    // Idle sessions still use a normal prompt.
+    await adapter.send("one", "y");
+    assert.deepEqual(ops(), ["agent/getStatus", "agent/stop"], "unsupported operations are not retried");
+    calls.length = 0;
+    await (adapter as any).poll();
+    assert.ok(!ops().includes("agent/prompt"), "nothing is sent while PI still runs");
     running = false;
+    await (adapter as any).poll();
+    await (adapter as any).poll();
+    assert.deepEqual(calls.filter((call) => call.op === "agent/prompt").map((call) => call.args[0].content), ["x", "y"]);
+    calls.length = 0;
+    // Idle sessions with nothing queued still use a normal prompt.
     await adapter.send("one", "hi");
     assert.deepEqual(ops(), ["agent/getStatus", "agent/prompt"]);
   } finally {
