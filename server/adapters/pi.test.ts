@@ -217,3 +217,48 @@ test("PI messages sent while running steer the turn, queue it, or use a graceful
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("PI keeps polling briefly after a turn ends so a late final reply still reaches the page", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aw-pi-settle-"));
+  let running = true;
+  let messages: any[] = [];
+  const server = createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString());
+    res.setHeader("content-type", "application/json");
+    if (body.method === "notifications/initialized") { res.writeHead(202); res.end(); return; }
+    if (body.method === "initialize") { res.setHeader("mcp-session-id", "s"); res.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: {} })); return; }
+    if (body.params.name === "pi_session_get") { res.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { structuredContent: { session: { messages } } } })); return; }
+    const op = body.params.arguments.operation;
+    const ok = (value: any) => res.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { structuredContent: { operation: op, result: value } } }));
+    if (op === "agent/getStatus") return ok({ status: { isRunning: running } });
+    if (op === "agent/pendingInteractive") return ok({ asks: [], permissions: [] });
+    return ok({});
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
+  writeFileSync(join(dir, "mcp-control.json"), JSON.stringify({ active: true, url: `http://127.0.0.1:${port}`, token: "t" }));
+  const hub = new Hub();
+  const events: any[] = [];
+  hub.subscribe((event) => events.push(event));
+  const adapter = new PiAdapter(hub, dir);
+  try {
+    adapter.watch("one");
+    await (adapter as any).poll();
+    assert.ok(events.some((event) => event.type === "status" && event.status === "running"));
+    (adapter as any).watched.get("one").until = 0; // the page stopped renewing its watch
+    running = false;
+    await (adapter as any).poll();
+    assert.equal(events.at(-1).status, "idle");
+    messages = [{ id: "final", role: "assistant", content: "全部完成", createdAt: new Date().toISOString() }];
+    await (adapter as any).poll();
+    assert.ok(events.some((event) => event.type === "item" && event.item.id === "final"), "the final reply persisted after idle is still delivered");
+    for (let index = 0; index < 6; index++) await (adapter as any).poll();
+    assert.ok(!(adapter as any).watched.has("one"), "polling stops once settled");
+  } finally {
+    await adapter.stop();
+    server.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

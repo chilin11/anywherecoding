@@ -49,6 +49,27 @@ export function splitKey(key: string): { agent: Agent; nativeId: string } | null
 type Listener = (event: RelayEvent) => void;
 
 /**
+ * Merge relay-cached errors into the newest history page at the position they happened.
+ * Errors already in the page (adapters that persist them, e.g. PI) are skipped, and errors
+ * older than the page belong to earlier pages, so they are not pinned below the latest reply.
+ */
+export function mergeErrors(history: Item[], errors: Item[]): Item[] {
+  const ids = new Set(history.map((item) => item.id));
+  const stamps = history.map((item) => item.ts).filter((ts): ts is number => typeof ts === "number");
+  const start = stamps.length ? Math.min(...stamps) : -Infinity;
+  const merged = history.slice();
+  for (const error of errors) {
+    if (ids.has(error.id)) continue;
+    if (typeof error.ts !== "number") { merged.push(error); continue; }
+    if (history.length && error.ts < start) continue;
+    let at = merged.length;
+    while (at > 0 && typeof merged[at - 1].ts === "number" && merged[at - 1].ts! > error.ts) at--;
+    merged.splice(at, 0, error);
+  }
+  return merged;
+}
+
+/**
  * The adapters' single output: live events fan out to every SSE client, and
  * pending approvals and live statuses are remembered so a client that
  * (re)connects starts from the current state.
@@ -82,6 +103,11 @@ export class Hub {
   }
 
   errorItems(sessionId: string): Item[] { return this.errors.get(sessionId) ?? []; }
+
+  /** The newest history page plus relay-only errors, each placed where it happened. */
+  withErrors(sessionId: string, history: Item[]): Item[] {
+    return mergeErrors(history, this.errorItems(sessionId));
+  }
 
   /** Forget relay-side state of a deleted session. */
   forget(sessionId: string): void {

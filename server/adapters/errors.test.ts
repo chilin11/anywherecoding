@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Hub } from "../hub.ts";
+import { Hub, mergeErrors } from "../hub.ts";
+import type { Item } from "../types.ts";
 import { errorText } from "../errors.ts";
 import { CodexAdapter } from "./codex.ts";
 import { ClaudeAdapter } from "./claude.ts";
@@ -51,4 +52,20 @@ test("Claude error results preserve native errors array in both live and replay,
   assert.match(hub.errorItems("claude:test").at(-1)!.text, /authentication failed[\s\S]*401/);
   run.busy = true; adapter.onExit(run, 1);
   assert.match(hub.errorItems("claude:test").at(-1)!.text, /进程退出[\s\S]*network disconnected/);
+});
+
+test("cached errors are placed by time and never pinned below newer history", () => {
+  const history = [
+    { id: "a", kind: "assistant", text: "a", ts: 100 },
+    { id: "m:error", kind: "error", text: "persisted", ts: 150 },
+    { id: "b", kind: "assistant", text: "final", ts: 300 },
+  ] as Item[];
+  const merged = mergeErrors(history, [
+    { id: "old", kind: "error", text: "older page", ts: 10 },
+    { id: "m:error", kind: "error", text: "persisted", ts: 150 },
+    { id: "mid", kind: "error", text: "relay", ts: 200 },
+    { id: "late", kind: "error", text: "after", ts: 400 },
+  ]);
+  assert.deepEqual(merged.map((item) => item.id), ["a", "m:error", "mid", "b", "late"]);
+  assert.deepEqual(mergeErrors([], [{ id: "x", kind: "error", text: "x", ts: 1 }]).map((item) => item.id), ["x"]);
 });

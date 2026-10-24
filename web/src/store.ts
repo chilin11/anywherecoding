@@ -168,6 +168,8 @@ export function useRelay(authed: boolean) {
         if (event.status === "idle" && (previous === "running" || previous === "approval")) {
           const title = sessionsRef.current.find((entry) => entry.id === event.sessionId)?.title ?? "会话";
           notify("任务已完成", title, `done:${event.sessionId}`, event.sessionId);
+          // The final reply can be persisted after the live stream went quiet; reload the open transcript.
+          if (loadedRef.current.has(event.sessionId)) setTimeout(() => void loadThread(event.sessionId), 1500);
         }
         setStatuses((all) => ({ ...all, [event.sessionId]: event.status }));
         if (event.status === "idle") {
@@ -191,7 +193,7 @@ export function useRelay(authed: boolean) {
         toast(event.level, event.message);
         break;
     }
-  }, [refreshSessions, toast]);
+  }, [refreshSessions, toast, loadThread]);
 
   useEffect(() => {
     if (!authed) {

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v0.2.4
+
+- Errors no longer stick to the bottom of a transcript. Errors the relay remembers are merged into history by time, skipped when already in history (PI persists them) and dropped when they belong to an older page; before, every history load appended them after the latest reply.
+- PI-Desktop: the final reply of a turn always shows. The relay keeps polling a few cycles after a turn turns idle, and the web reloads an open transcript when its session goes from running to idle.
+
 ## v0.2.3
 
 - PI-Desktop: sending while a turn runs now also works on upstream PI-Desktop builds, which expose neither `agent/steer` nor the turn queue. The relay uses the desktop's own "Send now": a graceful `agent/stop` lets the current reply/tool batch finish, then the held message is sent as the next prompt (oldest first). A pending message shows in the transcript until it is sent. Builds with `agent/steer` still steer the running turn directly.

@@ -159,7 +159,9 @@ function signature(item: Item): string {
   return JSON.stringify(item);
 }
 
-type Watched = { until: number; seen: Map<string, string>; running: boolean };
+/** settle: extra polls after a turn ends, so a final reply persisted just after isRunning flips still arrives. */
+type Watched = { until: number; seen: Map<string, string>; running: boolean; settle: number };
+const SETTLE_POLLS = 4;
 
 export class PiAdapter implements Adapter {
   readonly agent = "pi" as const;
@@ -386,7 +388,7 @@ export class PiAdapter implements Adapter {
   watch(sessionId: string): void {
     const existing = this.watched.get(sessionId);
     if (existing) existing.until = Date.now() + WATCH_TTL_MS;
-    else this.watched.set(sessionId, { until: Date.now() + WATCH_TTL_MS, seen: new Map(), running: false });
+    else this.watched.set(sessionId, { until: Date.now() + WATCH_TTL_MS, seen: new Map(), running: false, settle: 0 });
   }
 
   async send(sessionId: string, text: string): Promise<void> {
@@ -515,7 +517,7 @@ export class PiAdapter implements Adapter {
     try {
       const now = Date.now();
       for (const [sessionId, state] of [...this.watched]) {
-        if (state.until < now && !state.running && !this.outbox.has(sessionId)) {
+        if (state.until < now && !state.running && state.settle <= 0 && !this.outbox.has(sessionId)) {
           this.watched.delete(sessionId);
           continue;
         }
@@ -544,8 +546,9 @@ export class PiAdapter implements Adapter {
     if (!running && await this.drainOutbox(sessionId)) running = true;
     if (state.running !== running) {
       state.running = running;
+      state.settle = running ? 0 : SETTLE_POLLS;
       this.hub.status(key, running ? "running" : "idle");
-    }
+    } else if (!running && state.settle > 0) state.settle--;
   }
 
   private async pollPending(sessionId: string): Promise<void> {

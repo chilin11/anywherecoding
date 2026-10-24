@@ -275,7 +275,7 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
       const history = await adapter.history(nativeId, url.searchParams.get("before"));
       const key = decodeURIComponent(sessionMatch[1]!);
       if (!sessionCwds.has(key)) await listAll();
-      const items = url.searchParams.has("before") ? history.items : [...history.items, ...hub.errorItems(key).filter((error) => !history.items.some((item) => item.id === error.id))];
+      const items = url.searchParams.has("before") ? history.items : hub.withErrors(key, history.items);
       sendJson(response, 200, { ...history, items: items.map((item) => media.item(item, sessionCwds.get(key))) });
       return;
     }
