@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v0.2.5
+
+- Denser, IDE-like web layout: 13.5px prose with tighter line height and paragraph/list spacing, 22px tool rows and 20px reasoning rows with 1px gaps, compact user messages, errors and code blocks, a wider transcript, and a smaller sidebar (search, filters, project headers, session rows) and composer. Desktop transcripts are about 25% shorter.
+- Phones: the copy button on replies is a small icon in a reserved gutter instead of a labelled button covering the first line.
+
 ## v0.2.4
 
 - Errors no longer stick to the bottom of a transcript. Errors the relay remembers are merged into history by time, skipped when already in history (PI persists them) and dropped when they belong to an older page; before, every history load appended them after the latest reply.

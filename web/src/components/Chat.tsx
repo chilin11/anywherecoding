@@ -141,7 +141,7 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
 
       <div className="relative min-h-0 flex-1">
         <div ref={scroller} onScroll={onScroll} className="scroll-thin h-full overflow-y-auto overscroll-contain">
-          <div className="mx-auto max-w-4xl space-y-1.5 px-3 py-3 sm:px-4">
+          <div className="mx-auto max-w-5xl space-y-px px-2.5 py-2 sm:px-4">
             {thread?.before && (
               <div className="text-center text-xs text-zinc-400">{thread.loading ? "加载中…" : "上滑加载更早的消息"}</div>
             )}
@@ -165,7 +165,7 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
         )}
       </div>
 
-      <div className="mx-auto w-full max-w-4xl space-y-1.5 px-2 pt-1 pb-[max(env(safe-area-inset-bottom),0.5rem)] sm:px-3">
+      <div className="mx-auto w-full max-w-5xl space-y-1.5 px-2 pt-1 pb-[max(env(safe-area-inset-bottom),0.5rem)] sm:px-3">
         {approvals.length > 0 && (
           <div className="scroll-thin max-h-[55dvh] space-y-2 overflow-y-auto">
             {approvals.map((approval) => (

@@ -21,38 +21,35 @@ body {
 
 /* Markdown inside assistant messages: dense, IDE-like typography. */
 .md {
-  @apply text-[14px] leading-6 break-words;
+  @apply text-[13.5px] leading-[1.6] break-words;
 }
 .md > * + * {
-  @apply mt-2;
+  @apply mt-1.5;
 }
 .md h1,
 .md h2,
 .md h3,
 .md h4 {
-  @apply mt-3 font-semibold leading-snug;
+  @apply mt-2.5 font-semibold leading-snug;
 }
 .md h1 {
-  @apply text-base;
+  @apply text-[15px];
 }
 .md h2 {
-  @apply text-[15px];
+  @apply text-[14px];
 }
 .md h3,
 .md h4 {
-  @apply text-sm;
+  @apply text-[13.5px];
 }
 .md ul {
-  @apply list-disc pl-5;
+  @apply list-disc pl-4.5;
 }
 .md ol {
   @apply list-decimal pl-5;
 }
-.md li + li {
-  @apply mt-0.5;
-}
 .md li > * + * {
-  @apply mt-1;
+  @apply mt-0.5;
 }
 .md a {
   @apply text-blue-600 underline underline-offset-2 dark:text-blue-400;
@@ -61,23 +58,23 @@ body {
   @apply border-l-2 border-zinc-300 pl-3 text-zinc-600 dark:border-zinc-600 dark:text-zinc-400;
 }
 .md code {
-  @apply rounded bg-zinc-100 px-1 py-px font-mono text-[12.5px] dark:bg-zinc-800;
+  @apply rounded bg-zinc-100 px-1 py-px font-mono text-[12px] dark:bg-zinc-800;
 }
 .md pre {
-  @apply overflow-x-auto rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2 text-[12.5px] leading-[1.45] dark:border-zinc-800 dark:bg-zinc-950/60;
+  @apply overflow-x-auto rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-[12px] leading-[1.45] dark:border-zinc-800 dark:bg-zinc-950/60;
 }
 .md pre code {
   @apply border-0 bg-transparent p-0;
 }
 .md table {
-  @apply block overflow-x-auto border-collapse text-[13px];
+  @apply block overflow-x-auto border-collapse text-[12.5px] leading-[1.45];
 }
 .md th,
 .md td {
-  @apply border border-zinc-200 px-2 py-0.5 dark:border-zinc-700;
+  @apply border border-zinc-200 px-1.5 py-0.5 dark:border-zinc-700;
 }
 .md hr {
-  @apply my-3 border-zinc-200 dark:border-zinc-700;
+  @apply my-2 border-zinc-200 dark:border-zinc-700;
 }
 
 .scroll-thin {
@@ -87,7 +84,7 @@ body {
 /* Phones: tighter prose, and wide code/tables scroll inside their own box. */
 @media (max-width: 639px) {
   .md {
-    @apply text-[14.5px] leading-6;
+    @apply text-[14px] leading-[1.55];
   }
   .md pre {
     @apply -mx-1 text-xs;

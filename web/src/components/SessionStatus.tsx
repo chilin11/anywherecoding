@@ -43,7 +43,7 @@ export function ActivitySummary({ relay }: { relay: Relay }) {
   const status: SessionStatus = counts.approval ? "approval" : counts.running ? "running" : counts.unknown || !relay.connected ? "unknown" : "idle";
   const label = `${counts.running} 个会话运行中，${counts.approval} 个会话等待审批${counts.unknown ? `，${counts.unknown} 个状态未知` : ""}${!relay.connected ? "，连接中断，状态可能未更新" : ""}`;
   return (
-    <div role="status" aria-label={label} title={label} className="flex flex-wrap items-center gap-1.5 px-3 pb-2 text-[11px] text-zinc-500">
+    <div role="status" aria-label={label} title={label} className="flex flex-wrap items-center gap-1.5 px-3 pb-1.5 text-[11px] text-zinc-500">
       <SessionStatusIcon status={status} />
       <span>{counts.running} 运行中 · {counts.approval} 待审批</span>
       {counts.unknown > 0 && <span>· {counts.unknown} 未知</span>}

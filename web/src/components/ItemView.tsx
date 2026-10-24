@@ -14,7 +14,7 @@ function Images({ images }: { images?: ImageInfo[] }) {
   if (!images?.length) return null;
   return <div className="my-1.5 grid min-w-0 justify-items-start gap-1.5">{images.map((image, index) => <ImagePreview key={`${index}:${image.src.slice(0,160)}`} {...image} />)}</div>;
 }
-function CopyButton({ text, label = "复制", className }: { text: () => string; label?: string; className?: string }) {
+function CopyButton({ text, label = "复制", className, iconOnly }: { text: () => string; label?: string; className?: string; iconOnly?: boolean }) {
   const [state, setState] = useState<"idle" | "done" | "failed">("idle");
   useEffect(() => {
     if (state === "idle") return;
@@ -31,7 +31,7 @@ function CopyButton({ text, label = "复制", className }: { text: () => string;
       <svg aria-hidden="true" viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.4">
         {state === "done" ? <path d="m3.5 8.5 3 3 6-7" strokeLinecap="round" strokeLinejoin="round" /> : <><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5V3.75A1.25 1.25 0 0 0 9.25 2.5h-5.5A1.25 1.25 0 0 0 2.5 3.75v5.5a1.25 1.25 0 0 0 1.25 1.25H5.5" /></>}
       </svg>
-      {state === "done" ? "已复制" : state === "failed" ? "复制失败" : label}
+      {!iconOnly && (state === "done" ? "已复制" : state === "failed" ? "复制失败" : label)}
     </button>
   );
 }
@@ -76,39 +76,39 @@ function ToolView({ item }: { item: Item }) {
   const summary = (tool.input ?? "").split("\n").find((line) => line.trim()) ?? "";
   const hasMore = Boolean(tool.output) || (tool.input ?? "").trim().includes("\n") || Boolean(tool.files?.length);
   const label = tool.status === "running" ? "运行中" : tool.status === "error" ? "失败" : tool.status === "denied" ? "已拒绝" : tool.status === "ok" ? "" : "状态未知";
-  return <div className="min-w-0 text-[13px]">
-    <button onClick={() => hasMore && setOpen(!open)} aria-expanded={open} aria-label={`${tool.name} ${label || "已完成"}`} className={cx("flex min-h-7 w-full min-w-0 items-center gap-2 rounded px-1.5 text-left text-zinc-600 dark:text-zinc-400", hasMore && "hover:bg-zinc-100 dark:hover:bg-zinc-800/70")}>
+  return <div className="min-w-0 text-[12.5px] leading-5">
+    <button onClick={() => hasMore && setOpen(!open)} aria-expanded={open} aria-label={`${tool.name} ${label || "已完成"}`} className={cx("flex w-full min-w-0 items-center gap-1.5 rounded px-1 text-left text-zinc-600 dark:text-zinc-400", isTouch ? "min-h-6" : "min-h-[22px]", hasMore && "hover:bg-zinc-100 dark:hover:bg-zinc-800/70")}>
       <ToolIcon status={tool.status} />
       <span className="shrink-0 font-medium text-zinc-800 dark:text-zinc-200">{tool.name}</span>
-      <span className="min-w-0 flex-1 truncate font-mono text-xs text-zinc-500" title={summary}>{summary}</span>
+      <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-zinc-500" title={summary}>{summary}</span>
       {label && <span className={cx("shrink-0 text-[11px]", tool.status === "error" ? "text-red-500" : tool.status === "denied" ? "text-amber-600" : "text-zinc-400")}>{label}</span>}
       <DiffCount additions={tool.additions} deletions={tool.deletions} />
       {tool.exitCode != null && tool.exitCode !== 0 && <span className="shrink-0 text-[11px] text-red-500">exit {tool.exitCode}</span>}
       {!isFileEdit && tool.durationMs != null && tool.durationMs > 0 && <span className="shrink-0 text-[11px] tabular-nums text-zinc-400">{duration(tool.durationMs)}</span>}
       {hasMore && <span aria-hidden="true" className="w-3 shrink-0 text-center text-zinc-400">{open ? "▾" : "▸"}</span>}
     </button>
-    {open && <div className="mt-0.5 mb-1 ml-6 min-w-0 space-y-1">
+    {open && <div className="mt-0.5 mb-1 ml-5 min-w-0 space-y-1">
       {tool.files?.map((file) => <div key={file.path} className="flex min-w-0 items-center gap-2 text-xs"><span className="min-w-0 flex-1 truncate font-mono" title={file.path}>{file.path}</span><DiffCount {...file} /></div>)}
-      {tool.input && <pre className="scroll-thin max-h-60 overflow-auto rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 font-mono text-xs leading-[1.45] whitespace-pre-wrap break-words dark:border-zinc-800 dark:bg-zinc-900">{tool.input}</pre>}
-      {tool.output && <pre className="scroll-thin max-h-80 overflow-auto rounded bg-zinc-950 px-2 py-1.5 font-mono text-xs leading-[1.45] whitespace-pre-wrap break-words text-zinc-200">{tool.output}</pre>}
+      {tool.input && <pre className="scroll-thin max-h-60 overflow-auto rounded border border-zinc-200 bg-zinc-50 px-2 py-1 font-mono text-[11.5px] leading-[1.45] whitespace-pre-wrap break-words dark:border-zinc-800 dark:bg-zinc-900">{tool.input}</pre>}
+      {tool.output && <pre className="scroll-thin max-h-80 overflow-auto rounded bg-zinc-950 px-2 py-1 font-mono text-[11.5px] leading-[1.45] whitespace-pre-wrap break-words text-zinc-200">{tool.output}</pre>}
     </div>}
     <Images images={item.images} />
   </div>;
 }
 function Reasoning({ item }: { item: Item }) {
   const [open, setOpen] = useState(false);
-  return <div className="text-xs text-zinc-500"><button onClick={() => setOpen(!open)} aria-expanded={open} className="flex min-h-6 items-center gap-1.5 rounded px-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800/70"><span aria-hidden="true" className="w-3 text-center">{open ? "▾" : "▸"}</span>思考过程</button>{open && <div className="mt-0.5 mb-1 ml-6 border-l-2 border-zinc-200 pl-3 leading-5 whitespace-pre-wrap dark:border-zinc-700">{item.text}</div>}</div>;
+  return <div className="text-[11.5px] leading-5 text-zinc-400"><button onClick={() => setOpen(!open)} aria-expanded={open} aria-label="思考过程" className={cx("flex items-center gap-1.5 rounded px-1 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800/70", isTouch ? "min-h-6" : "min-h-5")}><span aria-hidden="true" className="w-3 text-center">{open ? "▾" : "▸"}</span>思考</button>{open && <div className="mt-0.5 mb-1 ml-5 border-l-2 border-zinc-200 pl-2.5 text-zinc-500 whitespace-pre-wrap dark:border-zinc-700">{item.text}</div>}</div>;
 }
 export const ItemView = memo(function ItemView({ item }: { item: Item }) {
   switch (item.kind) {
-    case "user": return <div className="flex justify-end pt-1"><div className="max-w-[88%] rounded-lg bg-zinc-100 px-3 py-1.5 text-[14px] leading-6 whitespace-pre-wrap break-words dark:bg-zinc-800">{item.text}<Images images={item.images} /></div></div>;
-    case "assistant": return <div className="group/msg relative min-w-0">
-      <div className={cx("md min-w-0", item.streaming && "caret")}><Markdown text={item.text} /><Images images={item.images} /></div>
-      {!item.streaming && item.text.trim() && <div className={cx("absolute -top-1 right-0", !isTouch && "opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100")}><CopyButton text={() => item.text} className="bg-white/90 dark:bg-zinc-900/90" /></div>}
+    case "user": return <div className="flex justify-end pt-1.5 pb-0.5"><div className="max-w-[88%] rounded-md bg-zinc-100 px-2.5 py-1 text-[13.5px] leading-[1.6] whitespace-pre-wrap break-words dark:bg-zinc-800">{item.text}<Images images={item.images} /></div></div>;
+    case "assistant": return <div className="group/msg relative min-w-0 py-0.5">
+      <div className={cx("md min-w-0", isTouch && "pr-6", item.streaming && "caret")}><Markdown text={item.text} /><Images images={item.images} /></div>
+      {!item.streaming && item.text.trim() && <div className={cx("absolute -top-1 right-0", !isTouch && "opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100")}><CopyButton text={() => item.text} iconOnly={isTouch} className={cx("bg-white/90 dark:bg-zinc-900/90", isTouch && "min-h-6 px-1 text-zinc-400")} /></div>}
     </div>;
     case "reasoning": return <Reasoning item={item} />;
     case "tool": return <ToolView item={item} />;
-    case "error": return <div role="alert" className="rounded-md bg-red-500/10 px-2.5 py-1.5 text-[13px] whitespace-pre-wrap break-words text-red-700 dark:text-red-300">{item.text}</div>;
-    default: return <div className="min-w-0 px-1.5 text-xs whitespace-pre-wrap text-zinc-500">{item.text}<Images images={item.images} /></div>;
+    case "error": return <div role="alert" className="rounded bg-red-500/10 px-2 py-1 text-[12.5px] leading-5 whitespace-pre-wrap break-words text-red-700 dark:text-red-300">{item.text}</div>;
+    default: return <div className="min-w-0 px-1 text-[11.5px] leading-5 whitespace-pre-wrap text-zinc-500">{item.text}<Images images={item.images} /></div>;
   }
 });

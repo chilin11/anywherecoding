@@ -34,7 +34,7 @@ function SessionRow({ relay, session, active, onOpen, onDeleted, pinned }: { rel
   return (
     <div
       className={cx(
-        "group relative flex items-center rounded-md", isTouch ? "min-h-10" : "min-h-8",
+        "group relative flex items-center rounded", isTouch ? "min-h-9" : "min-h-7",
         active ? "bg-zinc-200 dark:bg-zinc-800" : "hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60",
       )}
     >
@@ -43,8 +43,8 @@ function SessionRow({ relay, session, active, onOpen, onDeleted, pinned }: { rel
         aria-current={active ? "page" : undefined}
         title={`${AGENT_META[session.agent].label} · ${session.title}${session.cwd ? `\n${shortPath(session.cwd)}` : ""}`}
         className={cx(
-          "flex min-w-0 flex-1 items-center gap-2 rounded-md pl-6 text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
-          isTouch ? "min-h-10 py-2" : "min-h-8 py-1",
+          "flex min-w-0 flex-1 items-center gap-2 rounded pl-5 text-left text-[12.5px] outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
+          isTouch ? "min-h-9 py-1.5" : "min-h-7 py-0.5",
           isTouch ? "pr-10" : "pr-2",
           active ? "font-medium" : "text-zinc-700 dark:text-zinc-300",
         )}
@@ -58,7 +58,7 @@ function SessionRow({ relay, session, active, onOpen, onDeleted, pinned }: { rel
         <span className={cx("shrink-0 text-[11px] font-normal text-zinc-400", !isTouch && "group-focus-within:invisible group-hover:invisible")}>{relativeTime(session.updatedAt)}</span>
       </button>
       <div className={cx("absolute top-1/2 right-1 -translate-y-1/2", !isTouch && "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 has-[[aria-expanded=true]]:opacity-100")}>
-        <SessionMenu relay={relay} session={session} onDeleted={() => onDeleted(session.id)} className={isTouch ? "size-8" : "size-7"} />
+        <SessionMenu relay={relay} session={session} onDeleted={() => onDeleted(session.id)} className={isTouch ? "size-8" : "size-6"} />
       </div>
     </div>
   );
@@ -112,24 +112,24 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
 
   return (
     <div className="flex h-full flex-col bg-zinc-50 dark:bg-zinc-950/60">
-      <div className="flex items-center gap-2 px-3 pt-[max(env(safe-area-inset-top),0.75rem)] pb-1">
-        <img src="/icon.svg" alt="" className="size-6" />
-        <span className="font-semibold">AnywhereCoding</span>
+      <div className="flex items-center gap-2 px-3 pt-[max(env(safe-area-inset-top),0.5rem)] pb-0.5">
+        <img src="/icon.svg" alt="" className="size-5" />
+        <span className="text-sm font-semibold">AnywhereCoding</span>
         <span
           className={cx("size-1.5 rounded-full", relay.connected ? "bg-emerald-500" : "animate-pulse bg-amber-500")}
           title={relay.connected ? "已连接" : "连接中断，正在重连"}
         />
-        <button onClick={onLogout} className="ml-auto min-h-8 rounded-md px-2 text-xs text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800">
+        <button onClick={onLogout} className="ml-auto min-h-7 rounded px-2 text-xs text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800">
           退出
         </button>
-        {onHide && <button onClick={onHide} aria-label="收起侧栏" title="收起侧栏" className="flex size-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800">
+        {onHide && <button onClick={onHide} aria-label="收起侧栏" title="收起侧栏" className="flex size-7 items-center justify-center rounded text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800">
           <svg aria-hidden="true" viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" /><path d="M6 3v10" /><path d="M10.5 6.5 9 8l1.5 1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>}
       </div>
       <ActivitySummary relay={relay} />
 
-      <div className="space-y-2 px-3 pb-2">
-        <div className="flex gap-2">
+      <div className="space-y-1.5 px-3 pb-1.5">
+        <div className="flex gap-1.5">
           <input
             ref={search}
             type="search"
@@ -137,12 +137,12 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
             onChange={(event) => setQuery(event.target.value)}
             placeholder={isTouch ? "搜索会话或项目" : "搜索会话或项目  ⌘K"}
             aria-label="搜索会话或项目"
-            className="min-h-9 min-w-0 flex-1 rounded-lg bg-zinc-200/60 px-3 text-sm outline-none placeholder:text-zinc-500 focus-visible:ring-2 focus-visible:ring-blue-500 dark:bg-zinc-800/80"
+            className="min-h-8 min-w-0 flex-1 rounded-md bg-zinc-200/60 px-2.5 text-[13px] outline-none placeholder:text-zinc-500 focus-visible:ring-2 focus-visible:ring-blue-500 dark:bg-zinc-800/80"
           />
           <button
             onClick={() => canCreate ? onNew(undefined, filter === "all" ? undefined : filter) : onConnections()}
             title={canCreate ? "新会话（可选择项目文件夹）" : "先添加连接"}
-            className="flex min-h-9 shrink-0 items-center gap-1 rounded-lg bg-zinc-900 px-3 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+            className="flex min-h-8 shrink-0 items-center gap-1 rounded-md bg-zinc-900 px-2.5 text-[13px] font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
           >
             <span aria-hidden="true" className="text-base leading-none">＋</span>新会话
           </button>
@@ -150,7 +150,7 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
         {pendingApprovals > 0 && (
           <button
             onClick={() => onOpen(relay.approvals[0].sessionId)}
-            className="flex min-h-9 w-full items-center gap-2 rounded-lg bg-amber-500/15 px-3 text-left text-sm text-amber-800 dark:text-amber-300"
+            className="flex min-h-8 w-full items-center gap-2 rounded-md bg-amber-500/15 px-2.5 text-left text-[13px] text-amber-800 dark:text-amber-300"
           >
             <span className="size-2 rounded-full bg-amber-500" />
             {pendingApprovals} 个请求等待审批
@@ -158,7 +158,7 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
           </button>
         )}
         {relay.agents.length > 1 && (
-          <div className="flex flex-wrap gap-1 text-xs" role="group" aria-label="按 IDE 筛选">
+          <div className="flex flex-wrap gap-1 text-[11px]" role="group" aria-label="按 IDE 筛选">
             {(["all", ...relay.agents.map((entry) => entry.agent)] as Filter[]).map((value) => {
               const availability = value === "all" ? null : relay.agents.find((agent) => agent.agent === value);
               return (
@@ -168,7 +168,7 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
                   aria-pressed={filter === value}
                   title={availability && !availability.ok ? availability.reason : undefined}
                   className={cx(
-                    "flex min-h-7 shrink-0 items-center gap-1 rounded-full px-2.5 whitespace-nowrap",
+                    "flex shrink-0 items-center gap-1 rounded-full px-2 whitespace-nowrap", isTouch ? "min-h-7" : "min-h-[22px]",
                     filter === value ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "bg-zinc-200/60 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800/70 dark:text-zinc-400 dark:hover:bg-zinc-800",
                   )}
                 >
@@ -184,7 +184,7 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
       <nav className="scroll-thin min-h-0 flex-1 overflow-y-auto border-t border-zinc-200 px-2 pb-2 dark:border-zinc-800" aria-label="会话">
         {pinned.length > 0 && (
           <div className="mb-0.5">
-            <div className="sticky top-0 z-10 flex min-h-7 items-center gap-1.5 bg-zinc-50 px-2 pt-1 text-xs font-semibold text-zinc-600 dark:bg-zinc-950 dark:text-zinc-400">
+            <div className="sticky top-0 z-10 flex min-h-6 items-center gap-1.5 bg-zinc-50 px-2 pt-1 text-[11.5px] font-semibold text-zinc-600 dark:bg-zinc-950 dark:text-zinc-400">
               <span aria-hidden="true" className="text-amber-500">★</span>置顶
               <span className="ml-auto font-normal text-zinc-400">{pinned.length}</span>
             </div>
@@ -201,7 +201,7 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
                   title={shortPath(cwd)}
                   aria-expanded={!isCollapsed}
                   aria-label={`${isCollapsed ? "展开" : "收起"}项目 ${basename(cwd)}`}
-                  className="flex min-h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-xs font-semibold text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+                  className="flex min-h-6 min-w-0 flex-1 items-center gap-1.5 rounded px-1.5 text-left text-[11.5px] font-semibold text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
                 >
                   <span aria-hidden="true" className={cx("inline-block text-zinc-400 transition-transform", isCollapsed ? "-rotate-90" : "")}>▾</span>
                   <span aria-hidden="true">📁</span>
@@ -212,7 +212,7 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
                   onClick={() => onNew(cwd, filter === "all" ? sessions.find((session) => session.id === activeId)?.agent ?? sessions[0]?.agent : filter)}
                   aria-label={`在项目 ${basename(cwd)} 中新建会话`}
                   title={`在 ${shortPath(cwd)} 中新建会话`}
-                  className="flex size-7 shrink-0 items-center justify-center rounded-md text-base text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                  className="flex size-6 shrink-0 items-center justify-center rounded text-sm text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
                 >＋</button>}
               </div>
               {!isCollapsed && sessions.map((session) => <SessionRow key={session.id} relay={relay} session={session} active={activeId === session.id} onOpen={onOpen} onDeleted={onDeleted} />)}
@@ -227,7 +227,7 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
       </nav>
 
       <section className="border-t border-zinc-200 px-2 pt-1.5 pb-[max(env(safe-area-inset-bottom),0.5rem)] dark:border-zinc-800" aria-label="连接的 IDE">
-        <button onClick={onConnections} aria-label="添加或管理连接" className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2 text-left text-xs hover:bg-zinc-200 dark:hover:bg-zinc-800">
+        <button onClick={onConnections} aria-label="添加或管理连接" className="flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs hover:bg-zinc-200 dark:hover:bg-zinc-800">
           <span className="font-medium text-zinc-600 dark:text-zinc-300">连接的 IDE</span>
           <span className="flex items-center gap-1" aria-hidden="true">
             {relay.agents.map((entry) => <span key={entry.agent} title={AGENT_META[entry.agent].label} className={cx("size-2 rounded-full", entry.ok ? AGENT_META[entry.agent].dot : "bg-zinc-300 ring-1 ring-amber-500 dark:bg-zinc-700")} />)}

@@ -73,7 +73,7 @@ export function Composer({ placeholder, running, disabled, onSend, onStop, draft
 
   const canSend = Boolean(text.trim()) && !sending && !disabled;
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white shadow-sm focus-within:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-800/60 dark:focus-within:border-zinc-500">
+    <div className="rounded-lg border border-zinc-200 bg-white shadow-sm focus-within:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-800/60 dark:focus-within:border-zinc-500">
       <textarea
         ref={ref}
         rows={1}
@@ -84,9 +84,9 @@ export function Composer({ placeholder, running, disabled, onSend, onStop, draft
         placeholder={placeholder}
         enterKeyHint={isTouch ? "enter" : "send"}
         aria-label={placeholder}
-        className="scroll-thin block max-h-60 min-h-10 w-full resize-none bg-transparent px-3 pt-2 pb-0.5 text-base leading-6 outline-none placeholder:text-zinc-400 disabled:opacity-50 sm:text-sm"
+        className="scroll-thin block max-h-60 min-h-9 w-full resize-none bg-transparent px-3 pt-1.5 pb-0 text-base leading-6 outline-none placeholder:text-zinc-400 disabled:opacity-50 sm:text-sm"
       />
-      <div className="flex items-center gap-2 px-1.5 pb-1">
+      <div className="flex items-center gap-2 px-1.5 pb-1 pt-0.5">
         <div className="min-w-0 flex-1">{toolbar}</div>
         {!isTouch && <span className="hidden shrink-0 text-[11px] text-zinc-400 lg:inline">Enter 发送 · Shift+Enter 换行</span>}
         {running && onStop && !text.trim() ? (
