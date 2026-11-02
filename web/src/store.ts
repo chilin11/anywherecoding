@@ -150,6 +150,12 @@ export function useRelay(authed: boolean) {
           return { ...all, [event.sessionId]: { ...thread, items: upsert(thread.items, event.item) } };
         });
         break;
+      case "itemRemoved":
+        setThreads((all) => {
+          const thread = all[event.sessionId];
+          return thread ? { ...all, [event.sessionId]: { ...thread, items: thread.items.filter((item) => item.id !== event.itemId) } } : all;
+        });
+        break;
       case "delta":
         if (!loadedRef.current.has(event.sessionId)) break;
         setThreads((all) => {

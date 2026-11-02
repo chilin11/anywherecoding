@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { AGENTS } from "./types.ts";
 import type {
   Agent,
   AgentAvailability,
@@ -15,6 +16,7 @@ import type { SessionConfig, SessionConfigPatch } from "./session-config.ts";
 /** What each backend (Codex, Claude Code, PI-Desktop) implements. */
 export interface Adapter {
   readonly agent: Agent;
+  readonly capabilities?: { externalExecution?: boolean; directorySource?: "backend" };
   start(): Promise<void>;
   stop(): Promise<void>;
   availability(): AgentAvailability;
@@ -42,8 +44,8 @@ export function splitKey(key: string): { agent: Agent; nativeId: string } | null
   const cut = key.indexOf(":");
   if (cut < 0) return null;
   const agent = key.slice(0, cut);
-  if (agent !== "codex" && agent !== "claude" && agent !== "pi" && agent !== "pi-native") return null;
-  return { agent, nativeId: key.slice(cut + 1) };
+  if (!AGENTS.includes(agent as Agent)) return null;
+  return { agent: agent as Agent, nativeId: key.slice(cut + 1) };
 }
 
 type Listener = (event: RelayEvent) => void;
@@ -116,6 +118,8 @@ export class Hub {
     this.errors.delete(sessionId);
     this.sessionsChanged();
   }
+
+  removeItem(sessionId: string, itemId: string): void { this.emit({ type: "itemRemoved", sessionId, itemId }); }
 
   delta(sessionId: string, itemId: string, text: string): void {
     this.emit({ type: "delta", sessionId, itemId, text });

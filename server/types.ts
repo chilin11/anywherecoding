@@ -1,8 +1,17 @@
 // Shared wire types between the relay server and the web client.
 
-export type Agent = "codex" | "claude" | "pi" | "pi-native";
+export type Agent = "codex" | "claude" | "pi" | "pi-native" | "botsteam";
 
-export const AGENTS: readonly Agent[] = ["codex", "claude", "pi", "pi-native"];
+export const AGENTS: readonly Agent[] = ["codex", "claude", "pi", "pi-native", "botsteam"];
+
+/** A backend-owned conversation target, independent of models/providers. */
+export type SessionTarget = {
+  id: string;
+  kind: "team" | "bot";
+  label: string;
+  description?: string;
+  directory: "required" | "optional";
+};
 
 export type SessionStatus = "idle" | "running" | "approval" | "unknown";
 
@@ -16,6 +25,8 @@ export type SessionSummary = {
   /** Unix ms. */
   updatedAt: number;
   status: SessionStatus;
+  target?: SessionTarget;
+  actions?: { rename: boolean; remove: boolean };
 };
 
 export type ItemKind = "user" | "assistant" | "reasoning" | "tool" | "system" | "error";
@@ -43,6 +54,9 @@ export type Item = {
   tool?: ToolInfo;
   streaming?: boolean;
   images?: ImageInfo[];
+  speaker?: { id: string; name: string };
+  taskId?: string;
+  runId?: string;
 };
 
 export type History = {
@@ -99,6 +113,7 @@ export type RelayEvent =
   | { type: "sessions" }
   | { type: "item"; sessionId: string; item: Item }
   | { type: "delta"; sessionId: string; itemId: string; text: string }
+  | { type: "itemRemoved"; sessionId: string; itemId: string }
   | { type: "status"; sessionId: string; status: SessionStatus }
   | { type: "approval"; approval: Approval }
   | { type: "approvalResolved"; id: string }

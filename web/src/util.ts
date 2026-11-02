@@ -5,6 +5,7 @@ export const AGENT_META: Record<Agent, { label: string; dot: string; badge: stri
   claude: { label: "Claude Code", dot: "bg-orange-500", badge: "bg-orange-500/12 text-orange-700 dark:text-orange-300" },
   pi: { label: "PI-Desktop", dot: "bg-indigo-500", badge: "bg-indigo-500/12 text-indigo-700 dark:text-indigo-300" },
   "pi-native": { label: "Pi CLI", dot: "bg-fuchsia-500", badge: "bg-fuchsia-500/12 text-fuchsia-700 dark:text-fuchsia-300" },
+  botsteam: { label: "BotsTeam", dot: "bg-cyan-500", badge: "bg-cyan-500/12 text-cyan-700 dark:text-cyan-300" },
 };
 
 export const STATUS_LABEL: Record<SessionStatus, string> = {
@@ -71,4 +72,5 @@ export const DELETE_META: Record<Agent, { action: string; detail: string; perman
   claude: { action: "删除", detail: "会话文件移到 ~/.anywherecoding/trash/claude，可手动移回恢复。Claude.app 中对应的标签将无法打开。", permanent: false },
   pi: { action: "删除", detail: "从 PI-Desktop 中永久删除，无法恢复。", permanent: true },
   "pi-native": { action: "删除", detail: "会话文件移到 ~/.anywherecoding/trash/pi-native，可手动移回恢复。", permanent: false },
+  botsteam: { action: "归档", detail: "会话在 BotsTeam 中归档，项目文件保留。", permanent: false },
 };

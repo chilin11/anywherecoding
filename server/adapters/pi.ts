@@ -165,6 +165,7 @@ const SETTLE_POLLS = 4;
 
 export class PiAdapter implements Adapter {
   readonly agent = "pi" as const;
+  readonly capabilities = { externalExecution: true };
   private readonly hub: Hub;
   private readonly dataDir: string;
   private control: PiControl | null = null;

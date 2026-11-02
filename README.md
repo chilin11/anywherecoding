@@ -2,9 +2,9 @@
 
 在手机或电脑浏览器里，查看并继续本机 AI 编程会话。
 
-支持 **Codex、Claude Code / Claude.app、PI-Desktop 和原生 Pi CLI**。一个 Node.js 服务提供网页、API 和 SSE 实时事件；模型请求仍由本机原生客户端发出，AnywhereCoding 不直接调用模型 API，也不替换客户端的 API 地址、凭据或系统提示词。
+支持 **Codex、Claude Code / Claude.app、PI-Desktop、原生 Pi CLI 和 BotsTeam**（Team / Bot 会话）。一个 Node.js 服务提供网页、API 和 SSE 实时事件；模型请求仍由本机原生客户端发出，AnywhereCoding 不直接调用模型 API，也不替换客户端的 API 地址、凭据或系统提示词。
 
-当前初始版本：**v0.1.0**。
+当前版本：**v0.3.0**。
 
 ## 功能
 
@@ -78,6 +78,12 @@ pnpm dmg --native     # 只构建本机架构，便于本地测试
 
 脚本下载并校验固定版本的官方 Node.js（缓存在 `~/Library/Caches/anywherecoding/node`），用 `lipo` 合成通用二进制，打包服务端、网页和状态栏程序，ad-hoc 签名，启动内置服务做冒烟测试，再生成 DMG。推送 `v*` 标签时，GitHub Actions 会构建 DMG 并附加到 Release。
 
+## BotsTeam：Team / Bot 会话
+
+在「连接的 IDE → 添加」中选择 BotsTeam。默认连接同机 `http://127.0.0.1:8099`，不另起 Pi、不读取或迁移 BotsTeam 数据库。新会话可选 **Team、项目内单 Bot，或无目录 Bot**；目标选择独立于模型设置。已有项目会话可在空闲时切换目标，流式输出保留各 Bot 身份。停止、审批、提问及归档使用原后端接口；断开连接不会停止其任务。
+
+后端电脑路径不会当作 AnywhereCoding 本机路径使用。远端地址必须配置 HTTPS 和服务端保存的 BotsTeam Token。配置、通用能力字段、限制与验收边界见 [BotsTeam 接入说明](docs/BOTSTEAM.md)。
+
 ## 原生客户端连接
 
 | 连接 | 历史和继续方式 | 交互边界 |
@@ -86,6 +92,7 @@ pnpm dmg --native     # 只构建本机架构，便于本地测试
 | Claude Code | `~/.claude/projects` 原生 JSONL，读取 Claude.app 标题；通过 `claude --resume` 和 stream-json 继续 | 使用原生 CLI 后台进程；Claude.app 已打开的标签可能需要重开刷新 |
 | PI-Desktop | 正在运行的桌面 MCP 控制接口，轮询当前查看的会话 | 桌面执行和持久化，网页与桌面操作同一会话 |
 | Pi CLI | `~/.pi/agent/sessions` 原生 JSONL 树；通过 `pi --mode rpc --session <file>` 恢复 | 独立于 PI-Desktop；使用原生 Pi 的模型、工具和扩展 |
+| BotsTeam | 现有工作台 API / SSE，按项目对话或无目录 Bot 作用域继续 | Team/Bot 是会话目标而非模型；执行与持久化仍由原工作台负责 |
 
 Codex、Claude Code 和 Pi CLI 是通过原生后台协议进程操作，不能完整接管已经打开的终端/IDE 标签。避免网页与其他客户端同时写同一会话；后台服务继承的环境变量也可能与交互终端不同。网页主动选择模型、思考或权限时，才将对应设置传给客户端。
 
@@ -150,7 +157,7 @@ Pi 内置工具直接执行，没有通用的逐次工具审批模式。网页�
 
 `/api/status` 需要登录 Cookie 或 `Authorization: Bearer <token>`，返回运行/待审批计数、最多 20 个活动会话、连接可用性和读取错误。
 
-服务重启或退出会停止它拥有的 Codex、Claude Code 和 Pi CLI 进程，请在任务完成后操作；菜单会在有活动会话时先确认。移除 PI-Desktop 连接只断开网页控制，不停止桌面任务。
+服务重启或退出会停止它拥有的 Codex、Claude Code 和 Pi CLI 进程，请在任务完成后操作；菜单会在有活动会话时先确认。移除 PI-Desktop 或 BotsTeam 连接只断开网页控制，不停止桌面/工作台任务。
 
 后台服务访问 Downloads、Documents 等受保护目录需要单独授权。系统提示访问文件夹时选择允许，或在“隐私与安全性 → 文件与文件夹”中启用。由于没有固定的开发者签名，升级应用后可能需要重新允许。图片读取超时会显示不可用，其他网页请求继续响应。
 

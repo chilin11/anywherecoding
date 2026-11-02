@@ -19,6 +19,8 @@ export type Config = {
   piDesktopDataDir?: string;
   piBin?: string;
   piAgentDir?: string;
+  /** Server-side only. Remote origins require HTTPS and a BotsTeam remote Token. */
+  botsteam?: { url?: string; token?: string };
 };
 
 export const DATA_DIR = process.env.ANYWHERE_HOME ?? join(homedir(), ".anywherecoding");

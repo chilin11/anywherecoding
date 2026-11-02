@@ -9,6 +9,7 @@ const HELP: Record<Agent, string> = {
   claude: "连接 Claude Code CLI，读取 Claude Code / Claude.app 原生会话。",
   pi: "连接正在运行的 PI-Desktop，需启用桌面 MCP 控制口。",
   "pi-native": "连接原生 Pi CLI，使用本机 Pi 配置和会话，无需 PI-Desktop。",
+  botsteam: "连接 BotsTeam 后端，选择 Team 或单个 Bot；项目路径位于运行 BotsTeam 的电脑端。",
 };
 
 export function ConnectionsPanel({ relay, onClose }: { relay: Relay; onClose: () => void }) {

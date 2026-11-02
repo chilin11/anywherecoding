@@ -53,6 +53,11 @@ const Markdown = memo(function Markdown({ text }: { text: string }) {
   }}>{text}</ReactMarkdown>;
 });
 
+function Speaker({ item }: { item: Item }) {
+  if (!item.speaker) return null;
+  return <span title={`发言者：${item.speaker.name || item.speaker.id} (${item.speaker.id})`} className="inline-block max-w-40 truncate rounded bg-zinc-100 px-1.5 text-[11px] font-medium leading-5 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{item.speaker.name || item.speaker.id}</span>;
+}
+
 function ToolIcon({ status }: { status?: string }) {
   if (status === "running") return <span className="inline-block size-3 shrink-0 animate-spin rounded-full border-2 border-zinc-300 border-t-blue-500" />;
   if (status === "error") return <span className="text-red-500">✕</span>;
@@ -77,8 +82,9 @@ function ToolView({ item }: { item: Item }) {
   const hasMore = Boolean(tool.output) || (tool.input ?? "").trim().includes("\n") || Boolean(tool.files?.length);
   const label = tool.status === "running" ? "运行中" : tool.status === "error" ? "失败" : tool.status === "denied" ? "已拒绝" : tool.status === "ok" ? "" : "状态未知";
   return <div className="min-w-0 text-[12.5px] leading-5">
-    <button onClick={() => hasMore && setOpen(!open)} aria-expanded={open} aria-label={`${tool.name} ${label || "已完成"}`} className={cx("flex w-full min-w-0 items-center gap-1.5 rounded px-1 text-left text-zinc-600 dark:text-zinc-400", isTouch ? "min-h-6" : "min-h-[22px]", hasMore && "hover:bg-zinc-100 dark:hover:bg-zinc-800/70")}>
+    <button onClick={() => hasMore && setOpen(!open)} aria-expanded={open} aria-label={`${item.speaker ? `${item.speaker.name || item.speaker.id} · ` : ""}${tool.name} ${label || "已完成"}`} className={cx("flex w-full min-w-0 items-center gap-1.5 rounded px-1 text-left text-zinc-600 dark:text-zinc-400", isTouch ? "min-h-6" : "min-h-[22px]", hasMore && "hover:bg-zinc-100 dark:hover:bg-zinc-800/70")}>
       <ToolIcon status={tool.status} />
+      <Speaker item={item} />
       <span className="shrink-0 font-medium text-zinc-800 dark:text-zinc-200">{tool.name}</span>
       <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-zinc-500" title={summary}>{summary}</span>
       {label && <span className={cx("shrink-0 text-[11px]", tool.status === "error" ? "text-red-500" : tool.status === "denied" ? "text-amber-600" : "text-zinc-400")}>{label}</span>}
@@ -97,12 +103,13 @@ function ToolView({ item }: { item: Item }) {
 }
 function Reasoning({ item }: { item: Item }) {
   const [open, setOpen] = useState(false);
-  return <div className="text-[11.5px] leading-5 text-zinc-400"><button onClick={() => setOpen(!open)} aria-expanded={open} aria-label="思考过程" className={cx("flex items-center gap-1.5 rounded px-1 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800/70", isTouch ? "min-h-6" : "min-h-5")}><span aria-hidden="true" className="w-3 text-center">{open ? "▾" : "▸"}</span>思考</button>{open && <div className="mt-0.5 mb-1 ml-5 border-l-2 border-zinc-200 pl-2.5 text-zinc-500 whitespace-pre-wrap dark:border-zinc-700">{item.text}</div>}</div>;
+  return <div className="text-[11.5px] leading-5 text-zinc-400"><button onClick={() => setOpen(!open)} aria-expanded={open} aria-label={item.speaker ? `${item.speaker.name || item.speaker.id} 的思考过程` : "思考过程"} className={cx("flex items-center gap-1.5 rounded px-1 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800/70", isTouch ? "min-h-6" : "min-h-5")}><span aria-hidden="true" className="w-3 text-center">{open ? "▾" : "▸"}</span><Speaker item={item} />思考</button>{open && <div className="mt-0.5 mb-1 ml-5 border-l-2 border-zinc-200 pl-2.5 text-zinc-500 whitespace-pre-wrap dark:border-zinc-700">{item.text}</div>}</div>;
 }
 export const ItemView = memo(function ItemView({ item }: { item: Item }) {
   switch (item.kind) {
     case "user": return <div className="flex justify-end pt-1.5 pb-0.5"><div className="max-w-[88%] rounded-md bg-zinc-100 px-2.5 py-1 text-[13.5px] leading-[1.6] whitespace-pre-wrap break-words dark:bg-zinc-800">{item.text}<Images images={item.images} /></div></div>;
     case "assistant": return <div className="group/msg relative min-w-0 py-0.5">
+      {item.speaker && <div className="mb-0.5"><Speaker item={item} /></div>}
       <div className={cx("md min-w-0", isTouch && "pr-6", item.streaming && "caret")}><Markdown text={item.text} /><Images images={item.images} /></div>
       {!item.streaming && item.text.trim() && <div className={cx("absolute -top-1 right-0", !isTouch && "opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100")}><CopyButton text={() => item.text} iconOnly={isTouch} className={cx("bg-white/90 dark:bg-zinc-900/90", isTouch && "min-h-6 px-1 text-zinc-400")} /></div>}
     </div>;

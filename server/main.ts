@@ -7,12 +7,13 @@ import { ClaudeAdapter } from "./adapters/claude.ts";
 import { CodexAdapter } from "./adapters/codex.ts";
 import { PiAdapter } from "./adapters/pi.ts";
 import { PiNativeAdapter } from "./adapters/pi-native.ts";
+import { BotsTeamAdapter } from "./adapters/botsteam.ts";
 import { Connections, parseAgent } from "./connections.ts";
 import { Auth } from "./auth.ts";
 import { CONFIG_FILE, DATA_DIR, loadConfig } from "./config.ts";
 import { createDir, listDirs, resolveAllowed } from "./fsbrowse.ts";
 import { Hub, splitKey, type Adapter } from "./hub.ts";
-import type { Agent, ApprovalAnswer, RelayEvent, SessionSummary } from "./types.ts";
+import type { Agent, ApprovalAnswer, Item, RelayEvent, SessionSummary } from "./types.ts";
 import { parseConfigPatch } from "./session-config.ts";
 import { Media } from "./media.ts";
 import { summarize } from "./status.ts";
@@ -31,6 +32,7 @@ const connections = new Connections(join(DATA_DIR, "connections.json"), hub, (ag
     case "claude": return new ClaudeAdapter(target, config.claudeBin, config.claudeHiddenCwds);
     case "pi": return new PiAdapter(target, config.piDesktopDataDir);
     case "pi-native": return new PiNativeAdapter(target, config.piBin, config.piAgentDir);
+    case "botsteam": return new BotsTeamAdapter(target, config.botsteam, join(DATA_DIR, "botsteam-targets.json"));
   }
 });
 const adapters = connections.adapters;
@@ -123,7 +125,7 @@ async function listAll(): Promise<{ sessions: SessionSummary[]; errors: Record<s
     try {
       const sessions = await adapter.listSessions();
       if (adapters.get(adapter.agent) !== adapter) return [];
-      for (const session of sessions) sessionCwds.set(session.id, session.cwd);
+      for (const session of sessions) sessionCwds.set(session.id, adapter.capabilities?.directorySource === "backend" ? null : session.cwd);
       return sessions;
     } catch (error) {
       if (adapters.get(adapter.agent) === adapter) errors[adapter.agent] = adapter.availability().reason ?? (error as Error).message;
@@ -133,6 +135,11 @@ async function listAll(): Promise<{ sessions: SessionSummary[]; errors: Record<s
   const sessions = results.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
   sessions.sort((left, right) => right.updatedAt - left.updatedAt);
   return { sessions, errors };
+}
+
+function mediaItem(key: string, item: Item): Item {
+  const parsed = splitKey(key);
+  return parsed && adapters.get(parsed.agent)?.capabilities?.directorySource === "backend" ? item : media.item(item, sessionCwds.get(key));
 }
 
 function openEvents(request: IncomingMessage, response: ServerResponse): void {
@@ -146,7 +153,7 @@ function openEvents(request: IncomingMessage, response: ServerResponse): void {
   const send = (event: RelayEvent) => {
     const sessionId = "sessionId" in event ? event.sessionId : event.type === "approval" ? event.approval.sessionId : undefined;
     if (sessionId && !adapters.has(splitKey(sessionId)?.agent as Agent)) return;
-    response.write(`data: ${JSON.stringify(event.type === "item" ? { ...event, item: media.item(event.item, sessionCwds.get(event.sessionId)) } : event)}\n\n`);
+    response.write(`data: ${JSON.stringify(event.type === "item" ? { ...event, item: mediaItem(event.sessionId, event.item) } : event)}\n\n`);
   };
   const unsubscribe = hub.subscribe(send);
   // Keeps cloudflared and mobile networks from idling the stream out; the client also uses it to detect dead streams.
@@ -246,10 +253,10 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     if (!adapter) throw new HttpError(400, "未知 Agent");
     const text = String(body.text ?? "").trim();
     if (!text) throw new HttpError(400, "消息不能为空");
-    const cwd = resolveAllowed(String(body.cwd ?? ""), config.roots);
+    const cwd = adapter.capabilities?.directorySource === "backend" ? String(body.cwd ?? "") : resolveAllowed(String(body.cwd ?? ""), config.roots);
     const selection = body.config === undefined ? undefined : parseConfigPatch(body.config);
     const nativeId = await adapter.create(cwd, text, selection);
-    sessionCwds.set(`${adapter.agent}:${nativeId}`, cwd);
+    sessionCwds.set(`${adapter.agent}:${nativeId}`, adapter.capabilities?.directorySource === "backend" ? null : cwd);
     sendJson(response, 200, { id: `${adapter.agent}:${nativeId}` });
     return;
   }
@@ -276,7 +283,7 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
       const key = decodeURIComponent(sessionMatch[1]!);
       if (!sessionCwds.has(key)) await listAll();
       const items = url.searchParams.has("before") ? history.items : hub.withErrors(key, history.items);
-      sendJson(response, 200, { ...history, items: items.map((item) => media.item(item, sessionCwds.get(key))) });
+      sendJson(response, 200, { ...history, items: items.map((item) => mediaItem(key, item)) });
       return;
     }
     if (method !== "POST") throw new HttpError(405, "method not allowed");

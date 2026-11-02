@@ -1,5 +1,6 @@
 import { useId } from "react";
 import type { ConfigOption, ModelOption, SessionConfig, SessionConfigPatch } from "../../../server/session-config.ts";
+import type { SessionTarget } from "../../../server/types.ts";
 
 type Props = {
   config: SessionConfig;
@@ -7,6 +8,44 @@ type Props = {
   onChange: (patch: SessionConfigPatch) => void;
   showContext?: boolean;
 };
+
+export function selectedTarget(config: SessionConfig): SessionTarget | undefined {
+  return config.targets?.find((target) => target.id === config.targetId);
+}
+
+export function targetSelectionValid(config: SessionConfig): boolean {
+  return config.targets === undefined || selectedTarget(config) !== undefined;
+}
+
+/** Targets are independent of models, and remain visible outside the settings disclosure. */
+export function SessionTargetPicker({ config, disabled, onChange, directoryAvailable = true }: Pick<Props, "config" | "disabled" | "onChange"> & { directoryAvailable?: boolean }) {
+  const id = useId();
+  if (config.targets === undefined) return null;
+  const target = selectedTarget(config);
+  const valid = targetSelectionValid(config);
+  return (
+    <div className="min-w-0 space-y-1" aria-label="对话对象">
+      <label htmlFor={id} className="block text-xs font-medium text-zinc-500">对话对象 · Team / Bot</label>
+      <select
+        id={id}
+        value={config.targetId ?? ""}
+        disabled={disabled || config.targets.length === 0}
+        onChange={(event) => onChange({ targetId: event.target.value || null })}
+        aria-invalid={!valid}
+        aria-describedby={`${id}-description`}
+        className="min-h-9 w-full min-w-0 rounded-lg border border-zinc-200 bg-white px-2 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900"
+      >
+        <option value="" disabled>{config.targets.length ? "请选择对话对象" : "暂无可用对象"}</option>
+        {config.targetId != null && !target && <option value={config.targetId} disabled>对象已不可用</option>}
+        {config.targets.map((option) => <option key={option.id} value={option.id} disabled={!directoryAvailable && option.directory === "required"} title={option.description}>{option.kind === "team" ? "Team" : "Bot"} · {option.label}</option>)}
+      </select>
+      <p id={`${id}-description`} className="break-words text-[11px] leading-4 text-zinc-500">
+        {!valid ? "对话对象不可用，请重新选择或刷新设置。" : target ? [target.description, target.directory === "optional" ? "可不选择项目文件夹" : "需要项目文件夹"].filter(Boolean).join(" · ") : "使用后端默认对话对象"}
+        {!directoryAvailable && " · 无项目会话仅可选择无需项目的对象"}
+      </p>
+    </div>
+  );
+}
 
 // Only submit native option values supplied by the server.
 export function modelChange(model: ModelOption | undefined): SessionConfigPatch {

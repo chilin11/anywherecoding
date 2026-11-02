@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { Hub, type Adapter } from "./hub.ts";
 import { AGENTS, type Agent, type AgentAvailability, type Connection } from "./types.ts";
 
-export const CONNECTION_LABELS: Record<Agent, string> = { codex: "Codex", claude: "Claude Code", pi: "PI-Desktop", "pi-native": "Pi CLI" };
+export const CONNECTION_LABELS: Record<Agent, string> = { codex: "Codex", claude: "Claude Code", pi: "PI-Desktop", "pi-native": "Pi CLI", botsteam: "BotsTeam" };
 export function parseAgent(value: unknown): Agent {
   if (!AGENTS.includes(value as Agent)) throw Object.assign(new Error("未知连接类型"), { status: 400 });
   return value as Agent;
@@ -68,7 +68,8 @@ export class Connections {
   add(agent: Agent): Promise<void> {
     return this.serial(async () => {
       if (this.enabled.has(agent)) {
-        const result = await this.verify(this.adapters.get(agent)!, false);
+        const adapter = this.adapters.get(agent)!;
+        const result = await this.verify(adapter, this.failures.has(agent) || !adapter.availability().ok);
         if (!result.ok) throw Object.assign(new Error(result.reason ?? "连接不可用"), { status: 400 });
         this.failures.delete(agent); this.hub.sessionsChanged(); return;
       }
@@ -82,8 +83,8 @@ export class Connections {
   remove(agent: Agent): Promise<void> {
     return this.serial(async () => {
       if (!this.enabled.has(agent)) return;
-      if (agent !== "pi" && this.hub.busy(agent)) throw Object.assign(new Error("该连接仍有任务运行或等待审批，请结束后移除"), { status: 409 });
       const adapter = this.adapters.get(agent)!;
+      if (!adapter.capabilities?.externalExecution && this.hub.busy(agent)) throw Object.assign(new Error("该连接仍有任务运行或等待审批，请结束后移除"), { status: 409 });
       this.save(new Set([...this.enabled].filter((entry) => entry !== agent)));
       this.adapters.delete(agent); this.failures.delete(agent);
       await adapter.stop(); this.hub.clearAgent(agent);

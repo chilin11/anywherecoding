@@ -20,7 +20,7 @@ export function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [activeId, setActiveId] = useState<string | null>(currentRoute);
   const [drawer, setDrawer] = useState(false);
-  const [creating, setCreating] = useState<{ cwd: string | null; agent?: Agent; projectOnly: boolean } | null>(null);
+  const [creating, setCreating] = useState<{ cwd: string | null; cwdAgent?: Agent; agent?: Agent; projectOnly: boolean } | null>(null);
   const [managingConnections, setManagingConnections] = useState(false);
   // Sessions we just created, shown until the list catches up.
   const [pending, setPending] = useState<Record<string, SessionSummary>>({});
@@ -78,7 +78,8 @@ export function App() {
 
   function onNew(cwd?: string, agent?: Agent) {
     if (!relay.agents.some((entry) => entry.ok)) { setManagingConnections(true); setDrawer(false); return; }
-    setCreating({ cwd: cwd ?? activeCwd, agent: agent ?? active?.agent, projectOnly: Boolean(cwd) });
+    const cwdAgent = cwd !== undefined ? agent : active?.cwd != null ? active.agent : relay.sessions[0]?.agent;
+    setCreating({ cwd: cwd ?? activeCwd, cwdAgent, agent: agent ?? active?.agent, projectOnly: Boolean(cwd) });
     setDrawer(false);
   }
 
@@ -149,7 +150,7 @@ export function App() {
         {creating?.projectOnly ? (
           <div className="flex h-full flex-col">
             <header className="flex items-center px-2 pt-[max(env(safe-area-inset-top),0.375rem)] md:hidden">{menuButton}</header>
-            <div className="min-h-0 flex-1"><NewSession key={`${creating.cwd}:${creating.agent}`} relay={relay} initialCwd={creating.cwd} initialAgent={creating.agent} projectOnly onClose={() => setCreating(null)} onCreated={created} /></div>
+            <div className="min-h-0 flex-1"><NewSession key={`${creating.cwd}:${creating.agent}`} relay={relay} initialCwd={creating.cwd} initialAgent={creating.agent} initialCwdAgent={creating.cwdAgent} projectOnly onClose={() => setCreating(null)} onCreated={created} /></div>
           </div>
         ) : active ? (
           <Chat key={active.id} relay={relay} session={active} onMenu={showMenu} menuAlways={sidebarHidden} onNew={onNew} onDeleted={() => deleted(active.id)} />
@@ -189,7 +190,7 @@ export function App() {
         )}
       </main>
 
-      {creating && !creating.projectOnly && <NewSession relay={relay} initialCwd={creating.cwd} initialAgent={creating.agent} onClose={() => setCreating(null)} onCreated={created} />}
+      {creating && !creating.projectOnly && <NewSession relay={relay} initialCwd={creating.cwd} initialAgent={creating.agent} initialCwdAgent={creating.cwdAgent} onClose={() => setCreating(null)} onCreated={created} />}
       {managingConnections && <ConnectionsPanel relay={relay} onClose={() => setManagingConnections(false)} />}
 
       <div className="pointer-events-none fixed inset-x-0 top-3 z-50 flex flex-col items-center gap-2 px-3">

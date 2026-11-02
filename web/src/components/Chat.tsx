@@ -7,7 +7,7 @@ import { AGENT_META, basename, cx, shortPath, STATUS_LABEL } from "../util.ts";
 import { ApprovalCard } from "./ApprovalCard.tsx";
 import { Composer } from "./Composer.tsx";
 import { ItemView } from "./ItemView.tsx";
-import { configSummary, SessionConfiguration } from "./SessionConfiguration.tsx";
+import { configSummary, selectedTarget, SessionConfiguration, SessionTargetPicker, targetSelectionValid } from "./SessionConfiguration.tsx";
 import { SessionStatusIcon } from "./SessionStatus.tsx";
 import { SessionMenu } from "./SessionMenu.tsx";
 
@@ -20,7 +20,9 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
   const thread = relay.threads[session.id];
   const status = relay.statusOf(session);
   const running = status === "running" || status === "approval";
-  const configuration = useSessionConfiguration(session.id, session.agent, running);
+  const [sending, setSending] = useState(false);
+  const sendPending = useRef(false);
+  const configuration = useSessionConfiguration(session.id, session.agent, running, sending);
   const approvals = relay.approvals.filter((approval) => approval.sessionId === session.id);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -37,9 +39,9 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
     void relay.loadThread(session.id);
     stick.current = true;
     setAtBottom(true);
-    if (session.agent !== "pi" && session.agent !== "codex") return;
-    // PI-Desktop and desktop-owned Codex threads are polled; keep the server watching while this page is open.
-    if (session.agent === "codex") void api.watch(session.id).catch(() => undefined);
+    if (session.agent !== "pi" && session.agent !== "codex" && session.agent !== "botsteam") return;
+    // Polling adapters need their watch lease renewed while this page is open.
+    if (session.agent === "codex" || session.agent === "botsteam") void api.watch(session.id).catch(() => undefined);
     const timer = setInterval(() => void api.watch(session.id).catch(() => undefined), 60_000);
     return () => clearInterval(timer);
   }, [session.id, session.agent, relay.loadThread]);
@@ -89,6 +91,10 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
 
   async function send(text: string) {
     if (configuration.isSaving()) throw new Error("设置正在保存，请稍后发送。");
+    if (configuration.config && !targetSelectionValid(configuration.config)) throw new Error("请选择可用的对话对象。");
+    if (sendPending.current) throw new Error("消息正在发送，请稍后。");
+    sendPending.current = true;
+    setSending(true);
     stick.current = true;
     setActionError(null);
     try {
@@ -97,6 +103,9 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
       setActionError(`发送失败：${(error as Error).message}`);
       relay.toast("error", (error as Error).message);
       throw error;
+    } finally {
+      sendPending.current = false;
+      setSending(false);
     }
   }
 
@@ -113,6 +122,7 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
   const meta = AGENT_META[session.agent];
   const hint = DESKTOP_HINT[session.agent];
   const summary = configuration.config ? configSummary(configuration.config) : null;
+  const target = configuration.config ? selectedTarget(configuration.config) : session.target;
   const settingsOpen = showSettings || Boolean(configuration.error);
 
   return (
@@ -126,6 +136,7 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
           <div className="flex min-w-0 items-center gap-1.5 text-xs text-zinc-500">
             <SessionStatusIcon status={status} />
             <span className={cx("shrink-0 rounded px-1.5 py-px text-[11px] font-medium", meta.badge)}>{meta.label}</span>
+            {target && <span className="min-w-0 truncate" title={target.description}>{target.kind === "team" ? "Team" : "Bot"} · {target.label}</span>}
             <span className="min-w-0 truncate" title={session.cwd ?? ""}>{basename(session.cwd)}</span>
             {status !== "idle" && status !== "unknown" && <span className={cx("shrink-0", status === "approval" ? "text-amber-600 dark:text-amber-400" : "text-blue-600 dark:text-blue-400")}>· {STATUS_LABEL[status]}</span>}
           </div>
@@ -195,12 +206,13 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
             </button>
           </div>
         )}
+        {configuration.config && <SessionTargetPicker config={configuration.config} disabled={configuration.saving || running || sending} directoryAvailable={Boolean(session.cwd)} onChange={(patch) => { if (!sendPending.current) void configuration.save(patch); }} />}
         {settingsOpen && (
           <div id={settingsId} className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/60" aria-busy={configuration.loading || configuration.saving}>
             {configuration.config && (
               <SessionConfiguration
                 config={configuration.config}
-                disabled={configuration.saving || running}
+                disabled={configuration.saving || running || sending}
                 onChange={(patch) => void configuration.save(patch)}
                 showContext={session.agent === "pi" || session.agent === "pi-native"}
               />
@@ -219,7 +231,7 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
           draftKey={session.id}
           placeholder={running ? "追加消息…" : `给 ${meta.label} 发消息`}
           running={running}
-          disabled={configuration.saving}
+          disabled={configuration.saving || Boolean(configuration.config && !targetSelectionValid(configuration.config))}
           onSend={send}
           onStop={stop}
           toolbar={

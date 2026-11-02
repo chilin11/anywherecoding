@@ -203,9 +203,9 @@ export function SessionMenu({ relay, session, onDeleted, className }: Props) {
           <button role="menuitem" className={item} onClick={() => pick(() => toggle(session.id))}>
             <span aria-hidden="true" className="w-4 text-center">{pinned ? "☆" : "★"}</span>{pinned ? "取消置顶" : "置顶"}
           </button>
-          <button role="menuitem" className={item} disabled={busy} title={busy ? "运行中不能重命名" : undefined} onClick={() => pick(() => setDialog("rename"))}>
+          {session.actions?.rename !== false && <button role="menuitem" className={item} disabled={busy} title={busy ? "运行中不能重命名" : undefined} onClick={() => pick(() => setDialog("rename"))}>
             <span aria-hidden="true" className="w-4 text-center">✎</span>重命名
-          </button>
+          </button>}
           {session.cwd && (
             <button role="menuitem" className={item} onClick={() => pick(() => {
               copyText(session.cwd!).then(() => relay.toast("info", `已复制 ${shortPath(session.cwd)}`), (error) => relay.toast("error", `复制失败：${(error as Error).message}`));
@@ -213,10 +213,12 @@ export function SessionMenu({ relay, session, onDeleted, className }: Props) {
               <span aria-hidden="true" className="w-4 text-center">⧉</span>复制项目路径
             </button>
           )}
-          <div className="my-1 h-px bg-zinc-200 dark:bg-zinc-700" role="separator" />
-          <button role="menuitem" className={cx(item, "text-red-600 dark:text-red-400")} disabled={busy} title={busy ? "运行中或等待审批时不能删除，请先停止" : undefined} onClick={() => pick(() => setDialog("delete"))}>
-            <span aria-hidden="true" className="w-4 text-center">{session.agent === "codex" ? "⤓" : "✕"}</span>{meta.action}
-          </button>
+          {session.actions?.remove !== false && <>
+            <div className="my-1 h-px bg-zinc-200 dark:bg-zinc-700" role="separator" />
+            <button role="menuitem" className={cx(item, "text-red-600 dark:text-red-400")} disabled={busy} title={busy ? "运行中或等待审批时不能删除，请先停止" : undefined} onClick={() => pick(() => setDialog("delete"))}>
+              <span aria-hidden="true" className="w-4 text-center">{meta.action === "归档" ? "⤓" : "✕"}</span>{meta.action}
+            </button>
+          </>}
         </div>,
         document.body,
       )}
