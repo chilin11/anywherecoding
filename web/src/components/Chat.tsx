@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Agent, SessionSummary } from "../../../server/types.ts";
 import { api } from "../api.ts";
 import type { Relay } from "../store.ts";
@@ -10,6 +10,7 @@ import { ItemView } from "./ItemView.tsx";
 import { configSummary, selectedTarget, SessionConfiguration, SessionTargetPicker, targetSelectionValid } from "./SessionConfiguration.tsx";
 import { SessionStatusIcon } from "./SessionStatus.tsx";
 import { SessionMenu } from "./SessionMenu.tsx";
+import { groupTimelineEntries, TaskGroup } from "./TaskGroup.tsx";
 
 const DESKTOP_HINT: Record<string, string> = {
   codex: "Codex 桌面 App 正打开的会话：网页消息会交给桌面 App 执行并同步显示；审批需在桌面处理。",
@@ -34,6 +35,10 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
   const [actionError, setActionError] = useState<string | null>(null);
   const approvalLimit = relay.agents.find((entry) => entry.agent === session.agent && entry.ok)?.warning;
   const [limitClosed, setLimitClosed] = useState(false);
+
+  const timelineEntries = useMemo(() => {
+    return groupTimelineEntries(thread?.items ?? []);
+  }, [thread?.items]);
 
   useEffect(() => {
     void relay.loadThread(session.id);
@@ -141,7 +146,7 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
             {status !== "idle" && status !== "unknown" && <span className={cx("shrink-0", status === "approval" ? "text-amber-600 dark:text-amber-400" : "text-blue-600 dark:text-blue-400")}>· {STATUS_LABEL[status]}</span>}
           </div>
         </div>
-        {session.cwd && <button
+        {session.cwd && session.createInProject !== false && <button
           onClick={() => onNew(session.cwd!, session.agent)}
           aria-label="在当前项目中新建会话"
           title={`在 ${shortPath(session.cwd)} 中新建会话`}
@@ -159,7 +164,13 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
             {thread?.error && <div className="rounded-lg bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">{thread.error}</div>}
             {!thread && <div className="text-center text-sm text-zinc-400">加载中…</div>}
             {thread && !thread.loading && !thread.error && thread.items.length === 0 && <div className="py-10 text-center text-sm text-zinc-400">还没有消息</div>}
-            {thread?.items.map((item) => <ItemView key={item.id} item={item} />)}
+            {timelineEntries.map((entry) =>
+              entry.type === "item" ? (
+                <ItemView key={entry.item.id} item={entry.item} />
+              ) : (
+                <TaskGroup key={entry.taskId} taskId={entry.taskId} items={entry.items} sessionRunning={running} />
+              )
+            )}
             {running && approvals.length === 0 && (
               <div className="flex items-center gap-2 px-1.5 text-xs text-zinc-400">
                 <span className="size-1.5 animate-pulse rounded-full bg-blue-500" /> 正在处理…

@@ -22,6 +22,11 @@ export type SessionSummary = {
   nativeId: string;
   title: string;
   cwd: string | null;
+  /** Optional project identity and display label where a path alone is ambiguous. */
+  projectKey?: string;
+  projectLabel?: string;
+  /** False when cwd cannot safely identify a project for path-based creation. */
+  createInProject?: boolean;
   /** Unix ms. */
   updatedAt: number;
   status: SessionStatus;
@@ -56,6 +61,8 @@ export type Item = {
   images?: ImageInfo[];
   speaker?: { id: string; name: string };
   taskId?: string;
+  /** Root task ID for items belonging to a child task. */
+  parentTaskId?: string;
   runId?: string;
 };
 

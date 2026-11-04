@@ -75,7 +75,7 @@ export class BotsTeamProjection {
         const speaker = { id: employee, name: text(employees.get(employee), "name") || employee || "Bot" };
         const key = `${run.task}:${run.id}`, stamp = run.ts || timestamp(task.created_at) || ts;
         const active = !terminal(run.status || text(task, "status")) && (!task.run_id || task.run_id === run.id);
-        const common = { ts: stamp, taskId: run.task, runId: run.id, speaker };
+        const common = { ts: stamp, taskId: run.task, runId: run.id, speaker, ...(run.task !== taskId ? { parentTaskId: taskId } : {}) };
         if (run.reasoning) result.push({ ...common, id: `reasoning:${key}`, kind: "reasoning", text: run.reasoning, streaming: active });
         for (const [call, tool] of run.tools) {
           const args = json(tool.args), changes = json(tool.changes);
@@ -96,7 +96,7 @@ export class BotsTeamProjection {
         const id = text(task, "id");
         if (this.root(id) !== taskId || runs.some((run) => run.task === id)) continue;
         const employee = text(task, "assigned_employee_id"), summary = text(task, "result_summary");
-        result.push({ id: `summary:${id}`, kind: "assistant", text: summary ? `历史摘要：${summary}` : terminal(text(task, "status")) ? "（旧记录没有回复原文）" : "正在执行…", taskId: id, ts: timestamp(task.created_at), speaker: { id: employee, name: text(employees.get(employee), "name") || employee || "Bot" }, streaming: !terminal(text(task, "status")) });
+        result.push({ id: `summary:${id}`, kind: "assistant", text: summary ? `历史摘要：${summary}` : terminal(text(task, "status")) ? "（旧记录没有回复原文）" : "正在执行…", taskId: id, ...(id !== taskId ? { parentTaskId: taskId } : {}), ts: timestamp(task.created_at), speaker: { id: employee, name: text(employees.get(employee), "name") || employee || "Bot" }, streaming: !terminal(text(task, "status")) });
       }
     }
     return result;

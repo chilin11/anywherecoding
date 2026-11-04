@@ -100,7 +100,7 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
     const byProject = new Map<string, SessionSummary[]>();
     for (const session of visible) {
       if (pinnedSet.has(session.id)) continue;
-      const key = session.cwd ?? "";
+      const key = session.projectKey ?? session.cwd ?? "";
       byProject.set(key, [...(byProject.get(key) ?? []), session]);
     }
     return { pinned, groups: [...byProject.entries()] };
@@ -191,24 +191,26 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
             {pinned.map((session) => <SessionRow key={session.id} relay={relay} session={session} active={activeId === session.id} onOpen={onOpen} onDeleted={onDeleted} pinned />)}
           </div>
         )}
-        {groups.map(([cwd, sessions]) => {
-          const isCollapsed = collapsed[cwd];
+        {groups.map(([key, sessions]) => {
+          const cwd = sessions[0]?.cwd ?? "";
+          const label = sessions[0]?.projectLabel || basename(cwd);
+          const isCollapsed = collapsed[key];
           return (
-            <div key={cwd || "-"} className="mb-0.5">
+            <div key={key || "-"} className="mb-0.5">
               <div className="sticky top-0 z-10 flex items-center gap-1 bg-zinc-50 pt-1 dark:bg-zinc-950">
                 <button
-                  onClick={() => setCollapsed((all) => ({ ...all, [cwd]: !isCollapsed }))}
+                  onClick={() => setCollapsed((all) => ({ ...all, [key]: !isCollapsed }))}
                   title={shortPath(cwd)}
                   aria-expanded={!isCollapsed}
-                  aria-label={`${isCollapsed ? "展开" : "收起"}项目 ${basename(cwd)}`}
+                  aria-label={`${isCollapsed ? "展开" : "收起"}项目 ${label}`}
                   className="flex min-h-6 min-w-0 flex-1 items-center gap-1.5 rounded px-1.5 text-left text-[11.5px] font-semibold text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
                 >
                   <span aria-hidden="true" className={cx("inline-block text-zinc-400 transition-transform", isCollapsed ? "-rotate-90" : "")}>▾</span>
                   <span aria-hidden="true">📁</span>
-                  <span className="truncate">{basename(cwd)}</span>
+                  <span className="truncate">{label}</span>
                   <span className="ml-auto font-normal text-zinc-400">{sessions.length}</span>
                 </button>
-                {cwd && <button
+                {cwd && sessions[0]?.createInProject !== false && <button
                   onClick={() => onNew(cwd, filter === "all" ? sessions.find((session) => session.id === activeId)?.agent ?? sessions[0]?.agent : filter)}
                   aria-label={`在项目 ${basename(cwd)} 中新建会话`}
                   title={`在 ${shortPath(cwd)} 中新建会话`}

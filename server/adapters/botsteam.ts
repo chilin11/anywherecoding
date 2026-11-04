@@ -15,6 +15,13 @@ type State = {
   ready: Promise<void>; readyDone: boolean; synced: boolean; resolve: () => void; reject: (error: Error) => void;
   refresh: Promise<void> | null; sent: Map<string, string>; publishTimer?: NodeJS.Timeout;
 };
+// Upstream SSH projects keep root_path empty and expose their directory in workspace.
+// This is display metadata only: operations must retain the opaque project/conversation IDs.
+function sshRoot(project: Row): string {
+  const workspace = project.workspace;
+  if (!workspace || typeof workspace !== "object" || Array.isArray(workspace)) return "";
+  return workspace.kind === "ssh" && text(workspace, "authority_id") ? text(workspace, "canonical_root") : "";
+}
 const encode = (ref: Ref): string => Buffer.from(JSON.stringify(ref)).toString("base64url");
 export function botsTeamRef(nativeId: string): Ref {
   if (!/^[A-Za-z0-9_-]{1,4096}$/.test(nativeId)) throw invalidConfig("无效的 BotsTeam 会话");
@@ -85,7 +92,7 @@ export class BotsTeamAdapter implements Adapter {
     const pending = (async () => {
       const [projects, employees] = await Promise.all([this.api.array("/api/projects"), this.api.array("/api/employees")]);
       if (!this.started || generation !== this.generation) throw new BotsTeamError("BotsTeam 连接已更换", 503);
-      this.projects = new Map(projects.filter((p) => text(p, "id") && text(p, "root_path")).map((p) => [text(p, "id"), p]));
+      this.projects = new Map(projects.filter((p) => text(p, "id") && (text(p, "root_path") || sshRoot(p))).map((p) => [text(p, "id"), p]));
       this.employees = new Map(employees.filter((e) => text(e, "id")).map((e) => [text(e, "id"), e])); this.catalogAt = Date.now(); this.failure = "";
     })();
     this.catalog = pending;
@@ -118,7 +125,8 @@ export class BotsTeamAdapter implements Adapter {
     const selected = ref ? this.select(nativeId!, ref) : this.targets()[0];
     return { model: null, thinking: null, permissionMode: null, models: [], permissionModes: [],
       targets: ref?.kind === "bot" ? this.targets().filter((target) => target.id === `bot:${ref.bot}`) : this.targets(), targetId: selected?.id ?? null,
-      directory: { source: "backend", projects: [...this.projects.values()].map((p) => ({ path: text(p, "root_path"), label: text(p, "name") })) },
+      // The path-only creation API cannot distinguish SSH authorities; do not offer their roots here.
+      directory: { source: "backend", projects: [...this.projects.values()].filter((p) => text(p, "root_path")).map((p) => ({ path: text(p, "root_path"), label: text(p, "name") })) },
       notice: "Team/Bot 是会话目标，不是模型。模型、思考和长期权限沿用 BotsTeam；断开本连接不会停止工作台任务。" };
   }
   async configure(nativeId: string, patch: SessionConfigPatch): Promise<SessionConfig> {
@@ -139,7 +147,8 @@ export class BotsTeamAdapter implements Adapter {
       const ref: Ref = { kind: "conversation", project: text(project, "id"), conversation: text(row, "id") }, nativeId = encode(ref), key = sessionKey(this.agent, nativeId);
       found.set(nativeId, row);
       const live = this.states.get(ref.project)?.until ?? 0;
-      result.push({ id: key, agent: this.agent, nativeId, title: text(row, "title") || "BotsTeam 对话", cwd: text(project, "root_path") || null, updatedAt: timestamp(row.updated_at), status: (live > Date.now() ? this.hub.liveStatus(key) : undefined) ?? (row.active_count > 0 ? "running" : "idle"), target: this.select(nativeId, ref), actions: { rename: true, remove: true } });
+      const remote = !text(project, "root_path") && Boolean(sshRoot(project));
+      result.push({ id: key, agent: this.agent, nativeId, title: text(row, "title") || "BotsTeam 对话", cwd: text(project, "root_path") || sshRoot(project) || null, ...(remote ? { projectKey: `botsteam:ssh:${ref.project}`, projectLabel: `SSH · ${text(project, "name") || sshRoot(project)}`, createInProject: false } : {}), updatedAt: timestamp(row.updated_at), status: (live > Date.now() ? this.hub.liveStatus(key) : undefined) ?? (row.active_count > 0 ? "running" : "idle"), target: this.select(nativeId, ref), actions: { rename: true, remove: true } });
     }
     this.conversations = found;
     for (const employee of this.employees.values()) {
@@ -316,7 +325,7 @@ export class BotsTeamAdapter implements Adapter {
     if (cwd.length > 4096 || /[\r\n\0]/.test(cwd) || !(/^[A-Za-z]:[\\/]/.test(cwd) || cwd.startsWith("/"))) throw invalidConfig("请填写 BotsTeam 电脑上的绝对目录");
     let project = [...this.projects.values()].find((p) => text(p, "root_path") === cwd);
     if (!project) {
-      const leader = [...this.projects.values()].map((p) => text(p, "leader_employee_id")).find((id) => this.employees.has(id)) || (this.employees.has("bot_leader") ? "bot_leader" : "");
+      const leader = [...this.projects.values()].filter((p) => text(p, "root_path")).map((p) => text(p, "leader_employee_id")).find((id) => this.employees.has(id)) || (this.employees.has("bot_leader") ? "bot_leader" : "");
       if (target.kind === "team" && !leader) throw invalidConfig("请先在 BotsTeam 配置项目 Leader，或选择 Bot 会话");
       const created = json(await this.api.request("/api/projects", { root_path: cwd, mode: target.kind === "team" ? "leader" : "direct", leader_employee_id: leader || target.id.slice(4), default_employee_id: target.kind === "bot" ? target.id.slice(4) : leader }));
       if (!text(created, "id")) throw new BotsTeamError("BotsTeam 未返回新项目"); this.projects.set(created.id, created); project = created;

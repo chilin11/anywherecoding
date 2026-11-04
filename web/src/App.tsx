@@ -74,11 +74,12 @@ export function App() {
 
   const candidate = relay.sessions.find((session) => session.id === activeId) ?? (activeId ? pending[activeId] : undefined);
   const active = candidate && relay.agents.some((entry) => entry.agent === candidate.agent) ? candidate : undefined;
-  const activeCwd = active?.cwd ?? relay.sessions[0]?.cwd ?? null;
+  const defaultSession = active ?? relay.sessions.find((session) => session.createInProject !== false && session.cwd);
+  const activeCwd = defaultSession?.createInProject === false ? null : defaultSession?.cwd ?? null;
 
   function onNew(cwd?: string, agent?: Agent) {
     if (!relay.agents.some((entry) => entry.ok)) { setManagingConnections(true); setDrawer(false); return; }
-    const cwdAgent = cwd !== undefined ? agent : active?.cwd != null ? active.agent : relay.sessions[0]?.agent;
+    const cwdAgent = cwd !== undefined ? agent : activeCwd ? defaultSession?.agent : undefined;
     setCreating({ cwd: cwd ?? activeCwd, cwdAgent, agent: agent ?? active?.agent, projectOnly: Boolean(cwd) });
     setDrawer(false);
   }

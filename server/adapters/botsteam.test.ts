@@ -84,6 +84,35 @@ test("projection keeps task/run/Bot identity, full replies, child ownership and 
   assert.ok(projection.active({ project: "p1", conversation: "c1" }).every((t) => t.id !== "other"));
 });
 
+test("projection marks every child item with its root without changing details or order", () => {
+  const projection = new BotsTeamProjection();
+  const root = task("root"), child = task("child", "c1", "p1", "frontend", "root");
+  const nested = task("nested", "c1", "p1", "frontend", "child");
+  const pending = task("pending", "c1", "p1", "frontend", "child");
+  const summary = { ...task("summary", "c1", "p1", "frontend", "root"), status: "completed", result_summary: "finished" };
+  const emptyRoot = task("zroot");
+  projection.setTasks([root, child, nested, pending, summary, emptyRoot]);
+  const event = (id: number, taskId: string, run: string, type: string, payload: string) => projection.event({ id, task_id: taskId, run_id: run, type, payload });
+  event(1, "root", "run_root", "text_delta", "root response");
+  event(2, "nested", "run_nested", "thinking_delta", "nested thought");
+  event(3, "nested", "run_nested", "tool_execution_start", JSON.stringify({ toolCallId: "read", toolName: "read", args: { path: "file.ts" } }));
+  event(4, "nested", "run_nested", "text_delta", "nested response");
+  const items = projection.items({ project: "p1", conversation: "c1" }, new Map([["frontend", { name: "Frontend" }]]));
+  const time = Date.parse(stamp);
+  assert.deepEqual(items, [
+    { id: "user:root", kind: "user", text: "request root", ts: time, taskId: "root" },
+    { id: "assistant:root:run_root", kind: "assistant", text: "root response", ts: time, taskId: "root", runId: "run_root", speaker: { id: "leader", name: "leader" }, streaming: true },
+    { id: "reasoning:nested:run_nested", kind: "reasoning", text: "nested thought", ts: time, taskId: "nested", parentTaskId: "root", runId: "run_nested", speaker: { id: "frontend", name: "Frontend" }, streaming: true },
+    { id: "tool:nested:run_nested:read", kind: "tool", text: "", ts: time, taskId: "nested", parentTaskId: "root", runId: "run_nested", speaker: { id: "frontend", name: "Frontend" }, tool: { name: "read", input: "file.ts", output: "", status: "running" } },
+    { id: "assistant:nested:run_nested", kind: "assistant", text: "nested response", ts: time, taskId: "nested", parentTaskId: "root", runId: "run_nested", speaker: { id: "frontend", name: "Frontend" }, streaming: true },
+    { id: "summary:child", kind: "assistant", text: "正在执行…", ts: time, taskId: "child", parentTaskId: "root", speaker: { id: "frontend", name: "Frontend" }, streaming: true },
+    { id: "summary:pending", kind: "assistant", text: "正在执行…", ts: time, taskId: "pending", parentTaskId: "root", speaker: { id: "frontend", name: "Frontend" }, streaming: true },
+    { id: "summary:summary", kind: "assistant", text: "历史摘要：finished", ts: time, taskId: "summary", parentTaskId: "root", speaker: { id: "frontend", name: "Frontend" }, streaming: false },
+    { id: "user:zroot", kind: "user", text: "request zroot", ts: time, taskId: "zroot" },
+    { id: "summary:zroot", kind: "assistant", text: "正在执行…", ts: time, taskId: "zroot", speaker: { id: "leader", name: "leader" }, streaming: true },
+  ]);
+});
+
 async function fixture() {
   const requests: { path: string; method: string; body: Row }[] = [];
   const projects: Row[] = [{ id: "p1", name: "Backend-only project", root_path: "/backend/project", mode: "leader", leader_employee_id: "leader", default_employee_id: "frontend" }, { id: "p2", name: "Other", root_path: "/backend/other", mode: "leader", leader_employee_id: "leader" }];
