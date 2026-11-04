@@ -76,8 +76,8 @@ require('node:readline').createInterface({input: process.stdin}).on('line', line
   if (m.type === 'user') {
     emit({type:'system',subtype:'init',session_id:'session',model:'real',permissionMode:'manual'});
     emit({type:'control_request',request_id:'permission',request:{subtype:'can_use_tool',tool_name:'Bash',input:{command:'pwd'}}});
-    emit({type:'result'});
   }
+  if (m.type === 'control_response' && m.response?.request_id === 'permission') emit({type:'result'});
 });
 `, { mode: 0o700 });
   const hub = new Hub();
@@ -97,16 +97,23 @@ require('node:readline').createInterface({input: process.stdin}).on('line', line
     assert.ok(events.some((event) => event.type === "approval"));
     await assert.rejects(adapter.configure("session", { thinking: "low" }), { status: 409 });
     await adapter.resolve("claude:permission", { choice: "allow" });
+    // Resolving the approval is not the end of the turn; wait for the result event.
+    for (let i = 0; i < 500 && (run.busy || hub.liveStatus("claude:session") !== "idle"); i++) await delay(10);
+    assert.equal(run.busy, false, "Claude turn did not finish after approval");
+    assert.equal(hub.liveStatus("claude:session"), "idle");
     await adapter.configure("session", { thinking: "low", permissionMode: "plan" });
     assert.equal(run.alive, false);
-    await adapter.send("session", "second");
-    run = (adapter as any).runs.get("session");
-    const lines = readFileSync(join(dir, "args.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const readArgs = () => readFileSync(join(dir, "args.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const lines = readArgs();
     const first = lines.find((args) => args.includes("--model"));
     assert.equal(first[first.indexOf("--effort") + 1], "high");
-    // Spawn writes its args asynchronously; wait for its first output.
-    await new Promise<void>((resolve) => run.child.stdout.once("data", () => resolve()));
-    const last = JSON.parse(readFileSync(join(dir, "args.jsonl"), "utf8").trim().split("\n").at(-1)!);
+    await adapter.send("session", "second");
+    run = (adapter as any).runs.get("session");
+    // The child may emit output before a listener can be attached; wait for its args instead.
+    for (let i = 0; i < 500 && readArgs().length <= lines.length; i++) await delay(10);
+    const updated = readArgs();
+    assert.ok(updated.length > lines.length, "Claude restart did not record its arguments");
+    const last = updated.at(-1);
     assert.equal(last[last.indexOf("--effort") + 1], "low");
     assert.equal(last[last.indexOf("--permission-mode") + 1], "plan");
     assert.ok(last.includes("--permission-prompt-tool"));
