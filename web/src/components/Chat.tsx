@@ -7,7 +7,7 @@ import { AGENT_META, basename, cx, shortPath, STATUS_LABEL } from "../util.ts";
 import { ApprovalCard } from "./ApprovalCard.tsx";
 import { Composer } from "./Composer.tsx";
 import { ItemView } from "./ItemView.tsx";
-import { configSummary, selectedTarget, SessionConfiguration, SessionTargetPicker, targetSelectionValid } from "./SessionConfiguration.tsx";
+import { configSummary, SessionConfiguration } from "./SessionConfiguration.tsx";
 import { SessionStatusIcon } from "./SessionStatus.tsx";
 import { SessionMenu } from "./SessionMenu.tsx";
 import { groupTimelineEntries, TaskGroup } from "./TaskGroup.tsx";
@@ -28,11 +28,13 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const lastTop = useRef(0);
+  const autoOlderCount = useRef(0);
   const [atBottom, setAtBottom] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const settingsId = useId();
   const [hintClosed, setHintClosed] = useState(() => localStorage.getItem("aw-hint-closed") === "1");
   const [actionError, setActionError] = useState<string | null>(null);
+  const [offline, setOffline] = useState(false);
   const approvalLimit = relay.agents.find((entry) => entry.agent === session.agent && entry.ok)?.warning;
   const [limitClosed, setLimitClosed] = useState(false);
 
@@ -44,12 +46,21 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
     void relay.loadThread(session.id);
     stick.current = true;
     setAtBottom(true);
-    if (session.agent !== "pi" && session.agent !== "codex" && session.agent !== "botsteam") return;
+    if (session.agent !== "pi" && session.agent !== "codex") return;
     // Polling adapters need their watch lease renewed while this page is open.
-    if (session.agent === "codex" || session.agent === "botsteam") void api.watch(session.id).catch(() => undefined);
+    void api.watch(session.id).catch(() => undefined);
     const timer = setInterval(() => void api.watch(session.id).catch(() => undefined), 60_000);
     return () => clearInterval(timer);
   }, [session.id, session.agent, relay.loadThread]);
+
+  useEffect(() => {
+    if (relay.connected) {
+      setOffline(false);
+      return;
+    }
+    const timer = setTimeout(() => setOffline(true), 3000);
+    return () => clearTimeout(timer);
+  }, [relay.connected]);
 
   useLayoutEffect(() => {
     const element = scroller.current;
@@ -65,6 +76,13 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
     if (element.firstElementChild) observer.observe(element.firstElementChild);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    const element = scroller.current;
+    if (!element || !thread?.before || thread.loading || thread.error || autoOlderCount.current >= 5 || element.scrollHeight > element.clientHeight) return;
+    autoOlderCount.current++;
+    void loadOlder();
+  }, [thread?.before, thread?.loading, thread?.error, thread?.items]);
 
   function scrollToBottom() {
     const element = scroller.current;
@@ -84,19 +102,23 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
     if (nearBottom) stick.current = true;
     else if (scrolledUp) stick.current = false;
     setAtBottom(stick.current || nearBottom);
-    if (element.scrollTop < 40 && thread?.before && !thread.loading) {
-      const previousHeight = element.scrollHeight;
-      void relay.loadThread(session.id, true).then(() => {
-        requestAnimationFrame(() => {
-          element.scrollTop = element.scrollHeight - previousHeight;
-        });
-      });
-    }
+    if (element.scrollTop < 40 && thread?.before && !thread.loading && !thread.error) void loadOlder();
+  }
+
+  async function loadOlder() {
+    const element = scroller.current;
+    const previousHeight = element?.scrollHeight ?? 0;
+    const previousTop = element?.scrollTop ?? 0;
+    const loaded = await relay.loadThread(session.id, true);
+    // A failed/superseded page must not jump the transcript back to the top.
+    if (!loaded || !element) return;
+    requestAnimationFrame(() => {
+      if (scroller.current === element && !stick.current) element.scrollTop = previousTop + element.scrollHeight - previousHeight;
+    });
   }
 
   async function send(text: string) {
     if (configuration.isSaving()) throw new Error("设置正在保存，请稍后发送。");
-    if (configuration.config && !targetSelectionValid(configuration.config)) throw new Error("请选择可用的对话对象。");
     if (sendPending.current) throw new Error("消息正在发送，请稍后。");
     sendPending.current = true;
     setSending(true);
@@ -127,7 +149,6 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
   const meta = AGENT_META[session.agent];
   const hint = DESKTOP_HINT[session.agent];
   const summary = configuration.config ? configSummary(configuration.config) : null;
-  const target = configuration.config ? selectedTarget(configuration.config) : session.target;
   const settingsOpen = showSettings || Boolean(configuration.error);
 
   return (
@@ -141,12 +162,11 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
           <div className="flex min-w-0 items-center gap-1.5 text-xs text-zinc-500">
             <SessionStatusIcon status={status} />
             <span className={cx("shrink-0 rounded px-1.5 py-px text-[11px] font-medium", meta.badge)}>{meta.label}</span>
-            {target && <span className="min-w-0 truncate" title={target.description}>{target.kind === "team" ? "Team" : "Bot"} · {target.label}</span>}
             <span className="min-w-0 truncate" title={session.cwd ?? ""}>{basename(session.cwd)}</span>
             {status !== "idle" && status !== "unknown" && <span className={cx("shrink-0", status === "approval" ? "text-amber-600 dark:text-amber-400" : "text-blue-600 dark:text-blue-400")}>· {STATUS_LABEL[status]}</span>}
           </div>
         </div>
-        {session.cwd && session.createInProject !== false && <button
+        {session.cwd && <button
           onClick={() => onNew(session.cwd!, session.agent)}
           aria-label="在当前项目中新建会话"
           title={`在 ${shortPath(session.cwd)} 中新建会话`}
@@ -159,14 +179,19 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
         <div ref={scroller} onScroll={onScroll} className="scroll-thin h-full overflow-y-auto overscroll-contain">
           <div className="mx-auto max-w-5xl space-y-px px-2.5 py-2 sm:px-4">
             {thread?.before && (
-              <div className="text-center text-xs text-zinc-400">{thread.loading ? "加载中…" : "上滑加载更早的消息"}</div>
+              <div className="text-center text-xs text-zinc-400"><button disabled={thread.loading} onClick={() => void loadOlder()} className="rounded px-2 py-1 underline disabled:no-underline">{thread.loading ? "加载中…" : "加载更早的消息"}</button></div>
             )}
-            {thread?.error && <div className="rounded-lg bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">{thread.error}</div>}
-            {!thread && <div className="text-center text-sm text-zinc-400">加载中…</div>}
+            {thread?.error && (
+              <div role="alert" className="flex items-start gap-3 rounded-lg bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">
+                <span className="min-w-0 flex-1 break-words">{thread.error}</span>
+                <button onClick={() => void (thread.errorOlder ? loadOlder() : relay.loadThread(session.id))} className="shrink-0 rounded px-1 underline focus-visible:ring-2 focus-visible:ring-red-500">重试</button>
+              </div>
+            )}
+            {(!thread || (thread.loading && thread.items.length === 0)) && <div role="status" className="py-4 text-center text-sm text-zinc-400">正在加载消息…</div>}
             {thread && !thread.loading && !thread.error && thread.items.length === 0 && <div className="py-10 text-center text-sm text-zinc-400">还没有消息</div>}
             {timelineEntries.map((entry) =>
               entry.type === "item" ? (
-                <ItemView key={entry.item.id} item={entry.item} />
+                <ItemView key={entry.item.id} item={entry.item} sessionRunning={running} />
               ) : (
                 <TaskGroup key={entry.taskId} taskId={entry.taskId} items={entry.items} sessionRunning={running} />
               )
@@ -217,7 +242,6 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
             </button>
           </div>
         )}
-        {configuration.config && <SessionTargetPicker config={configuration.config} disabled={configuration.saving || running || sending} directoryAvailable={Boolean(session.cwd)} onChange={(patch) => { if (!sendPending.current) void configuration.save(patch); }} />}
         {settingsOpen && (
           <div id={settingsId} className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/60" aria-busy={configuration.loading || configuration.saving}>
             {configuration.config && (
@@ -237,12 +261,13 @@ export function Chat({ relay, session, onMenu, menuAlways, onNew, onDeleted }: {
             {running && configuration.config && <p className="text-[11px] text-zinc-500">任务运行或等待审批时暂不能修改设置。</p>}
           </div>
         )}
+        {offline && !relay.connected && <div role="status" className="rounded-lg bg-amber-500/12 px-3 py-1.5 text-xs leading-5 text-amber-800 dark:text-amber-300">未连接到服务，正在重连…当前内容和状态可能不是最新</div>}
         {actionError && <div role="alert" className="flex items-start gap-2 rounded-lg bg-red-500/10 p-3 text-sm break-words whitespace-pre-wrap text-red-700 dark:text-red-300"><span className="min-w-0 flex-1">{actionError}</span><button aria-label="关闭操作错误" onClick={() => setActionError(null)} className="shrink-0">✕</button></div>}
         <Composer
           draftKey={session.id}
           placeholder={running ? "追加消息…" : `给 ${meta.label} 发消息`}
           running={running}
-          disabled={configuration.saving || Boolean(configuration.config && !targetSelectionValid(configuration.config))}
+          disabled={configuration.saving}
           onSend={send}
           onStop={stop}
           toolbar={

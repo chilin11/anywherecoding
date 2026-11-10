@@ -1,17 +1,8 @@
 // Shared wire types between the relay server and the web client.
 
-export type Agent = "codex" | "claude" | "pi" | "pi-native" | "botsteam";
+export type Agent = "codex" | "claude" | "pi" | "pi-native";
 
-export const AGENTS: readonly Agent[] = ["codex", "claude", "pi", "pi-native", "botsteam"];
-
-/** A backend-owned conversation target, independent of models/providers. */
-export type SessionTarget = {
-  id: string;
-  kind: "team" | "bot";
-  label: string;
-  description?: string;
-  directory: "required" | "optional";
-};
+export const AGENTS: readonly Agent[] = ["codex", "claude", "pi", "pi-native"];
 
 export type SessionStatus = "idle" | "running" | "approval" | "unknown";
 
@@ -22,16 +13,9 @@ export type SessionSummary = {
   nativeId: string;
   title: string;
   cwd: string | null;
-  /** Optional project identity and display label where a path alone is ambiguous. */
-  projectKey?: string;
-  projectLabel?: string;
-  /** False when cwd cannot safely identify a project for path-based creation. */
-  createInProject?: boolean;
   /** Unix ms. */
   updatedAt: number;
   status: SessionStatus;
-  target?: SessionTarget;
-  actions?: { rename: boolean; remove: boolean };
 };
 
 export type ItemKind = "user" | "assistant" | "reasoning" | "tool" | "system" | "error";
@@ -59,11 +43,10 @@ export type Item = {
   tool?: ToolInfo;
   streaming?: boolean;
   images?: ImageInfo[];
+  /** 子代理或委派任务的发言者及任务标识。 */
   speaker?: { id: string; name: string };
   taskId?: string;
-  /** Root task ID for items belonging to a child task. */
   parentTaskId?: string;
-  runId?: string;
 };
 
 export type History = {

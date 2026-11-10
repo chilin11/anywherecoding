@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentAvailability, Approval, Item, RelayEvent, SessionStatus, SessionSummary } from "../../server/types.ts";
 import { api, ApiError, subscribe } from "./api.ts";
 
-export type Thread = { items: Item[]; before: string | null; loading: boolean; error: string | null };
+export type Thread = { items: Item[]; before: string | null; loading: boolean; error: string | null; errorOlder?: boolean };
 
 export type Toast = { id: number; level: "info" | "error"; message: string };
 
@@ -58,7 +58,7 @@ function notify(title: string, body: string, tag: string, sessionId: string): vo
 }
 
 /** All client state: sessions, open transcripts, approvals and the event stream. */
-export function useRelay(authed: boolean) {
+export function useRelay(authed: boolean, activeId: string | null) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [agents, setAgents] = useState<AgentAvailability[]>([]);
@@ -71,6 +71,10 @@ export function useRelay(authed: boolean) {
   const historyRequests = useRef(new Map<string, symbol>());
   const historyReady = useRef(new Set<string>());
   const sessionsRequest = useRef(0);
+  const sessionsApplied = useRef(0);
+  const activeRef = useRef(activeId);
+  activeRef.current = activeId;
+  const sessionsFailing = useRef(false);
   const threadsRef = useRef(threads);
   threadsRef.current = threads;
   const sessionsRef = useRef(sessions);
@@ -88,7 +92,9 @@ export function useRelay(authed: boolean) {
     const request = ++sessionsRequest.current;
     try {
       const result = await api.sessions();
-      if (request !== sessionsRequest.current) return;
+      if (request < sessionsApplied.current) return;
+      sessionsApplied.current = request;
+      sessionsFailing.current = false;
       setSessions(result.sessions);
       setErrors(result.errors);
       setAgents(result.agents);
@@ -99,15 +105,18 @@ export function useRelay(authed: boolean) {
       for (const id of loadedRef.current) if (!retained(id)) { loadedRef.current.delete(id); historyRequests.current.delete(id); historyReady.current.delete(id); }
       setThreads((all) => Object.fromEntries(Object.entries(all).filter(([id]) => retained(id))));
     } catch (error) {
-      if (request !== sessionsRequest.current) return;
-      if (!(error instanceof ApiError && error.status === 401)) toast("error", (error as Error).message);
+      if (request < sessionsApplied.current) return;
+      if (!(error instanceof ApiError && error.status === 401) && !sessionsFailing.current) {
+        sessionsFailing.current = true;
+        toast("error", `会话列表刷新失败：${(error as Error).message}`);
+      }
     }
   }, [toast]);
 
   const loadThread = useCallback(async (id: string, older = false) => {
     const previous = threadsRef.current[id];
     const before = older ? previous?.before ?? null : null;
-    if (older && (!before || previous?.loading)) return;
+    if (older && (!before || previous?.loading)) return false;
     const request = Symbol();
     historyRequests.current.set(id, request);
     loadedRef.current.add(id);
@@ -116,7 +125,7 @@ export function useRelay(authed: boolean) {
     setThreads((all) => ({ ...all, [id]: { items: all[id]?.items ?? [], before: all[id]?.before ?? null, loading: true, error: null } }));
     try {
       const page = await api.history(id, before);
-      if (historyRequests.current.get(id) !== request) return;
+      if (historyRequests.current.get(id) !== request) return false;
       historyReady.current.add(id);
       setThreads((all) => {
         if (historyRequests.current.get(id) !== request) return all;
@@ -127,9 +136,11 @@ export function useRelay(authed: boolean) {
         const cursor = !older && hadHistory && (overlaps || !page.items.length) ? current?.before ?? null : page.before;
         return { ...all, [id]: { items, before: cursor, loading: false, error: null } };
       });
+      return true;
     } catch (error) {
-      if (historyRequests.current.get(id) !== request) return;
-      setThreads((all) => historyRequests.current.get(id) !== request ? all : ({ ...all, [id]: { ...(all[id] ?? { items: [], before: null }), loading: false, error: (error as Error).message } }));
+      if (historyRequests.current.get(id) !== request) return false;
+      setThreads((all) => historyRequests.current.get(id) !== request ? all : ({ ...all, [id]: { ...(all[id] ?? { items: [], before: null }), loading: false, error: (error as Error).message, errorOlder: older } }));
+      return false;
     }
   }, []);
 
@@ -214,16 +225,21 @@ export function useRelay(authed: boolean) {
         // Clear pre-disconnect overrides; new SSE statuses can override the snapshot.
         setStatuses({});
         void refreshSessions();
-        for (const id of loadedRef.current) void loadThread(id);
+        const active = activeRef.current;
+        for (const id of loadedRef.current) if (id !== active) loadedRef.current.delete(id);
+        if (active) void loadThread(active);
       },
       () => setConnected(false),
     );
     const refreshTimer = setInterval(() => { if (!document.hidden) void refreshSessions(); }, 10_000);
+    const onVisible = () => { if (!document.hidden) void refreshSessions(); };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
+      document.removeEventListener("visibilitychange", onVisible);
       unsubscribe();
       clearInterval(refreshTimer);
       historyRequests.current.clear();
-      sessionsRequest.current++;
+      sessionsApplied.current = ++sessionsRequest.current;
       setConnected(false);
     };
   }, [authed, onEvent, refreshSessions, loadThread]);

@@ -3,7 +3,8 @@ import { dirname } from "node:path";
 import { Hub, type Adapter } from "./hub.ts";
 import { AGENTS, type Agent, type AgentAvailability, type Connection } from "./types.ts";
 
-export const CONNECTION_LABELS: Record<Agent, string> = { codex: "Codex", claude: "Claude Code", pi: "PI-Desktop", "pi-native": "Pi CLI", botsteam: "BotsTeam" };
+export const CONNECTION_LABELS: Record<Agent, string> = { codex: "Codex", claude: "Claude Code", pi: "PI-Desktop", "pi-native": "Pi CLI" };
+const RETIRED_AGENTS: readonly unknown[] = ["botsteam"];
 export function parseAgent(value: unknown): Agent {
   if (!AGENTS.includes(value as Agent)) throw Object.assign(new Error("未知连接类型"), { status: 400 });
   return value as Agent;
@@ -13,6 +14,7 @@ export function parseAgent(value: unknown): Agent {
 export class Connections {
   readonly adapters = new Map<Agent, Adapter>();
   private enabled = new Set<Agent>();
+  private retired: unknown[] = [];
   private failures = new Map<Agent, string>();
   private queue: Promise<unknown> = Promise.resolve();
   private file: string;
@@ -22,15 +24,17 @@ export class Connections {
     this.file = file; this.hub = hub; this.factory = factory;
     if (existsSync(file)) {
       const value = JSON.parse(readFileSync(file, "utf8"));
-      if (!Array.isArray(value.enabled) || value.enabled.some((agent: unknown) => !AGENTS.includes(agent as Agent))) throw new Error("连接配置无效，请检查 connections.json");
-      this.enabled = new Set(value.enabled);
+      if (!Array.isArray(value.enabled) || value.enabled.some((agent: unknown) => !AGENTS.includes(agent as Agent) && !RETIRED_AGENTS.includes(agent))) throw new Error("连接配置无效，请检查 connections.json");
+      this.retired = value.enabled.filter((agent: unknown) => RETIRED_AGENTS.includes(agent));
+      if (this.retired.length) console.warn("已忽略不再支持的旧连接配置");
+      this.enabled = new Set(value.enabled.filter((agent: unknown) => !RETIRED_AGENTS.includes(agent)) as Agent[]);
     }
     for (const agent of this.enabled) this.adapters.set(agent, factory(agent, hub));
   }
   private save(enabled: Set<Agent>): void {
     mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
     const temp = this.file + ".tmp";
-    writeFileSync(temp, JSON.stringify({ enabled: [...enabled] }, null, 2) + "\n", { mode: 0o600 });
+    writeFileSync(temp, JSON.stringify({ enabled: [...enabled, ...this.retired] }, null, 2) + "\n", { mode: 0o600 });
     renameSync(temp, this.file);
     this.enabled = enabled;
   }

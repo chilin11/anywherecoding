@@ -73,17 +73,18 @@ function duration(ms: number): string {
   return ms < 1000 ? `${Math.round(ms)}ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60_000)}m${Math.round((ms % 60_000) / 1000)}s`;
 }
 /** One dense log-style row per tool call; details expand inline like an IDE output panel. */
-function ToolView({ item }: { item: Item }) {
+function ToolView({ item, sessionRunning }: { item: Item; sessionRunning?: boolean }) {
   const [open, setOpen] = useState(false);
   const tool = item.tool!;
   useEffect(() => { if (tool.status === "error" || tool.status === "denied") setOpen(true); }, [tool.status]);
   const isFileEdit = /^(?:edit|multiedit|write|apply_patch|fileChange)$/i.test(tool.name) || tool.additions != null || tool.deletions != null;
   const summary = (tool.input ?? "").split("\n").find((line) => line.trim()) ?? "";
   const hasMore = Boolean(tool.output) || (tool.input ?? "").trim().includes("\n") || Boolean(tool.files?.length);
-  const label = tool.status === "running" ? "运行中" : tool.status === "error" ? "失败" : tool.status === "denied" ? "已拒绝" : tool.status === "ok" ? "" : "状态未知";
+  const status = tool.status === "running" && sessionRunning === false ? undefined : tool.status;
+  const label = status === "running" ? "运行中" : tool.status === "error" ? "失败" : tool.status === "denied" ? "已拒绝" : tool.status === "ok" ? "" : "状态未知";
   return <div className="min-w-0 text-[12.5px] leading-5">
     <button onClick={() => hasMore && setOpen(!open)} aria-expanded={open} aria-label={`${item.speaker ? `${item.speaker.name || item.speaker.id} · ` : ""}${tool.name} ${label || "已完成"}`} className={cx("flex w-full min-w-0 items-center gap-1.5 rounded px-1 text-left text-zinc-600 dark:text-zinc-400", isTouch ? "min-h-6" : "min-h-[22px]", hasMore && "hover:bg-zinc-100 dark:hover:bg-zinc-800/70")}>
-      <ToolIcon status={tool.status} />
+      <ToolIcon status={status} />
       <Speaker item={item} />
       <span className="shrink-0 font-medium text-zinc-800 dark:text-zinc-200">{tool.name}</span>
       <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-zinc-500" title={summary}>{summary}</span>
@@ -105,7 +106,7 @@ function Reasoning({ item }: { item: Item }) {
   const [open, setOpen] = useState(false);
   return <div className="text-[11.5px] leading-5 text-zinc-400"><button onClick={() => setOpen(!open)} aria-expanded={open} aria-label={item.speaker ? `${item.speaker.name || item.speaker.id} 的思考过程` : "思考过程"} className={cx("flex items-center gap-1.5 rounded px-1 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800/70", isTouch ? "min-h-6" : "min-h-5")}><span aria-hidden="true" className="w-3 text-center">{open ? "▾" : "▸"}</span><Speaker item={item} />思考</button>{open && <div className="mt-0.5 mb-1 ml-5 border-l-2 border-zinc-200 pl-2.5 text-zinc-500 whitespace-pre-wrap dark:border-zinc-700">{item.text}</div>}</div>;
 }
-export const ItemView = memo(function ItemView({ item }: { item: Item }) {
+export const ItemView = memo(function ItemView({ item, sessionRunning }: { item: Item; sessionRunning?: boolean }) {
   switch (item.kind) {
     case "user": return <div className="flex justify-end pt-1.5 pb-0.5"><div className="max-w-[88%] rounded-md bg-zinc-100 px-2.5 py-1 text-[13.5px] leading-[1.6] whitespace-pre-wrap break-words dark:bg-zinc-800">{item.text}<Images images={item.images} /></div></div>;
     case "assistant": return <div className="group/msg relative min-w-0 py-0.5">
@@ -114,7 +115,7 @@ export const ItemView = memo(function ItemView({ item }: { item: Item }) {
       {!item.streaming && item.text.trim() && <div className={cx("absolute -top-1 right-0", !isTouch && "opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100")}><CopyButton text={() => item.text} iconOnly={isTouch} className={cx("bg-white/90 dark:bg-zinc-900/90", isTouch && "min-h-6 px-1 text-zinc-400")} /></div>}
     </div>;
     case "reasoning": return <Reasoning item={item} />;
-    case "tool": return <ToolView item={item} />;
+    case "tool": return <ToolView item={item} sessionRunning={sessionRunning} />;
     case "error": return <div role="alert" className="rounded bg-red-500/10 px-2 py-1 text-[12.5px] leading-5 whitespace-pre-wrap break-words text-red-700 dark:text-red-300">{item.text}</div>;
     default: return <div className="min-w-0 px-1 text-[11.5px] leading-5 whitespace-pre-wrap text-zinc-500">{item.text}<Images images={item.images} /></div>;
   }

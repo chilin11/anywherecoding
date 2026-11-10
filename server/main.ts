@@ -7,7 +7,6 @@ import { ClaudeAdapter } from "./adapters/claude.ts";
 import { CodexAdapter } from "./adapters/codex.ts";
 import { PiAdapter } from "./adapters/pi.ts";
 import { PiNativeAdapter } from "./adapters/pi-native.ts";
-import { BotsTeamAdapter } from "./adapters/botsteam.ts";
 import { Connections, parseAgent } from "./connections.ts";
 import { Auth } from "./auth.ts";
 import { CONFIG_FILE, DATA_DIR, loadConfig } from "./config.ts";
@@ -32,7 +31,6 @@ const connections = new Connections(join(DATA_DIR, "connections.json"), hub, (ag
     case "claude": return new ClaudeAdapter(target, config.claudeBin, config.claudeHiddenCwds);
     case "pi": return new PiAdapter(target, config.piDesktopDataDir);
     case "pi-native": return new PiNativeAdapter(target, config.piBin, config.piAgentDir);
-    case "botsteam": return new BotsTeamAdapter(target, config.botsteam, join(DATA_DIR, "botsteam-targets.json"));
   }
 });
 const adapters = connections.adapters;
@@ -125,7 +123,7 @@ async function listAll(): Promise<{ sessions: SessionSummary[]; errors: Record<s
     try {
       const sessions = await adapter.listSessions();
       if (adapters.get(adapter.agent) !== adapter) return [];
-      for (const session of sessions) sessionCwds.set(session.id, adapter.capabilities?.directorySource === "backend" ? null : session.cwd);
+      for (const session of sessions) sessionCwds.set(session.id, session.cwd);
       return sessions;
     } catch (error) {
       if (adapters.get(adapter.agent) === adapter) errors[adapter.agent] = adapter.availability().reason ?? (error as Error).message;
@@ -138,8 +136,7 @@ async function listAll(): Promise<{ sessions: SessionSummary[]; errors: Record<s
 }
 
 function mediaItem(key: string, item: Item): Item {
-  const parsed = splitKey(key);
-  return parsed && adapters.get(parsed.agent)?.capabilities?.directorySource === "backend" ? item : media.item(item, sessionCwds.get(key));
+  return media.item(item, sessionCwds.get(key));
 }
 
 function openEvents(request: IncomingMessage, response: ServerResponse): void {
@@ -253,10 +250,10 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     if (!adapter) throw new HttpError(400, "未知 Agent");
     const text = String(body.text ?? "").trim();
     if (!text) throw new HttpError(400, "消息不能为空");
-    const cwd = adapter.capabilities?.directorySource === "backend" ? String(body.cwd ?? "") : resolveAllowed(String(body.cwd ?? ""), config.roots);
+    const cwd = resolveAllowed(String(body.cwd ?? ""), config.roots);
     const selection = body.config === undefined ? undefined : parseConfigPatch(body.config);
     const nativeId = await adapter.create(cwd, text, selection);
-    sessionCwds.set(`${adapter.agent}:${nativeId}`, adapter.capabilities?.directorySource === "backend" ? null : cwd);
+    sessionCwds.set(`${adapter.agent}:${nativeId}`, cwd);
     sendJson(response, 200, { id: `${adapter.agent}:${nativeId}` });
     return;
   }

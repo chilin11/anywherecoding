@@ -166,7 +166,7 @@ export const TaskGroup = memo(function TaskGroup({
 
   const status = getTaskStatus(items, sessionRunning);
   const speaker = items.find((item) => item.speaker)?.speaker;
-  const botName = speaker?.name || speaker?.id || "子 Bot";
+  const botName = speaker?.name || speaker?.id || "子代理";
   const botId = speaker?.id;
   const summaryText = getSummaryText(items, status);
   const statsText = getStatsText(items);
@@ -244,7 +244,7 @@ export const TaskGroup = memo(function TaskGroup({
       {expanded && (
         <div id={contentId} role="region" aria-label={`${botName} 任务详情`} className="space-y-1 border-t border-zinc-200/80 px-3 pt-2 pb-2.5 sm:px-4 dark:border-zinc-800">
           {items.map((item) => (
-            <ItemView key={item.id} item={item} />
+            <ItemView key={item.id} item={item} sessionRunning={sessionRunning} />
           ))}
           <div className="flex justify-end pt-1">
             <button

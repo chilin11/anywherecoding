@@ -16,7 +16,7 @@ import type { SessionConfig, SessionConfigPatch } from "./session-config.ts";
 /** What each backend (Codex, Claude Code, PI-Desktop) implements. */
 export interface Adapter {
   readonly agent: Agent;
-  readonly capabilities?: { externalExecution?: boolean; directorySource?: "backend" };
+  readonly capabilities?: { externalExecution?: boolean };
   start(): Promise<void>;
   stop(): Promise<void>;
   availability(): AgentAvailability;

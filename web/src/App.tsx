@@ -20,11 +20,11 @@ export function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [activeId, setActiveId] = useState<string | null>(currentRoute);
   const [drawer, setDrawer] = useState(false);
-  const [creating, setCreating] = useState<{ cwd: string | null; cwdAgent?: Agent; agent?: Agent; projectOnly: boolean } | null>(null);
+  const [creating, setCreating] = useState<{ cwd: string | null; agent?: Agent; projectOnly: boolean } | null>(null);
   const [managingConnections, setManagingConnections] = useState(false);
   // Sessions we just created, shown until the list catches up.
   const [pending, setPending] = useState<Record<string, SessionSummary>>({});
-  const relay = useRelay(authed === true);
+  const relay = useRelay(authed === true, activeId);
   const sidebar = useSidebarWidth();
 
   useEffect(() => {
@@ -40,6 +40,14 @@ export function App() {
       void Notification.requestPermission().catch(() => undefined);
     }
   }, [authed]);
+
+  useEffect(() => {
+    setPending((current) => {
+      const listed = new Set(relay.sessions.map((session) => session.id));
+      if (!Object.keys(current).some((id) => listed.has(id))) return current;
+      return Object.fromEntries(Object.entries(current).filter(([id]) => !listed.has(id)));
+    });
+  }, [relay.sessions]);
 
   // The drawer only overlays content on phones; track that to make the page behind it inert.
   const [narrow, setNarrow] = useState(() => matchMedia("(max-width: 767px)").matches);
@@ -74,13 +82,14 @@ export function App() {
 
   const candidate = relay.sessions.find((session) => session.id === activeId) ?? (activeId ? pending[activeId] : undefined);
   const active = candidate && relay.agents.some((entry) => entry.agent === candidate.agent) ? candidate : undefined;
-  const defaultSession = active ?? relay.sessions.find((session) => session.createInProject !== false && session.cwd);
-  const activeCwd = defaultSession?.createInProject === false ? null : defaultSession?.cwd ?? null;
+  const defaultSession = active ?? relay.sessions.find((session) => session.cwd);
+  const activeCwd = defaultSession?.cwd ?? null;
+  const listedIds = new Set(relay.sessions.map((session) => session.id));
+  const sidebarRelay = { ...relay, sessions: [...Object.values(pending).filter((session) => !listedIds.has(session.id)), ...relay.sessions] };
 
   function onNew(cwd?: string, agent?: Agent) {
     if (!relay.agents.some((entry) => entry.ok)) { setManagingConnections(true); setDrawer(false); return; }
-    const cwdAgent = cwd !== undefined ? agent : activeCwd ? defaultSession?.agent : undefined;
-    setCreating({ cwd: cwd ?? activeCwd, cwdAgent, agent: agent ?? active?.agent, projectOnly: Boolean(cwd) });
+    setCreating({ cwd: cwd ?? activeCwd, agent: agent ?? active?.agent, projectOnly: Boolean(cwd) });
     setDrawer(false);
   }
 
@@ -125,7 +134,7 @@ export function App() {
           drawer ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <Sidebar relay={relay} activeId={activeId} onOpen={open} onNew={onNew} onConnections={() => { setCreating(null); setManagingConnections(true); setDrawer(false); }} onLogout={() => void logout()} onDeleted={deleted} onHide={narrow ? () => setDrawer(false) : () => sidebar.setCollapsed(true)} />
+        <Sidebar relay={sidebarRelay} activeId={activeId} onOpen={open} onNew={onNew} onConnections={() => { setCreating(null); setManagingConnections(true); setDrawer(false); }} onLogout={() => void logout()} onDeleted={deleted} onHide={narrow ? () => setDrawer(false) : () => sidebar.setCollapsed(true)} />
       </aside>
       {!narrow && !sidebarHidden && (
         <div
@@ -151,7 +160,7 @@ export function App() {
         {creating?.projectOnly ? (
           <div className="flex h-full flex-col">
             <header className="flex items-center px-2 pt-[max(env(safe-area-inset-top),0.375rem)] md:hidden">{menuButton}</header>
-            <div className="min-h-0 flex-1"><NewSession key={`${creating.cwd}:${creating.agent}`} relay={relay} initialCwd={creating.cwd} initialAgent={creating.agent} initialCwdAgent={creating.cwdAgent} projectOnly onClose={() => setCreating(null)} onCreated={created} /></div>
+            <div className="min-h-0 flex-1"><NewSession key={`${creating.cwd}:${creating.agent}`} relay={relay} initialCwd={creating.cwd} initialAgent={creating.agent} projectOnly onClose={() => setCreating(null)} onCreated={created} /></div>
           </div>
         ) : active ? (
           <Chat key={active.id} relay={relay} session={active} onMenu={showMenu} menuAlways={sidebarHidden} onNew={onNew} onDeleted={() => deleted(active.id)} />
@@ -191,7 +200,7 @@ export function App() {
         )}
       </main>
 
-      {creating && !creating.projectOnly && <NewSession relay={relay} initialCwd={creating.cwd} initialAgent={creating.agent} initialCwdAgent={creating.cwdAgent} onClose={() => setCreating(null)} onCreated={created} />}
+      {creating && !creating.projectOnly && <NewSession relay={relay} initialCwd={creating.cwd} initialAgent={creating.agent} onClose={() => setCreating(null)} onCreated={created} />}
       {managingConnections && <ConnectionsPanel relay={relay} onClose={() => setManagingConnections(false)} />}
 
       <div className="pointer-events-none fixed inset-x-0 top-3 z-50 flex flex-col items-center gap-2 px-3">

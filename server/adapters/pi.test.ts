@@ -8,12 +8,246 @@ import { PiAdapter, mapPiMessage } from "./pi.ts";
 import { Hub } from "../hub.ts";
 import type { RelayEvent } from "../types.ts";
 
+async function finishRefresh(adapter: PiAdapter, sessionId: string): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await (adapter as any).watched.get(sessionId)?.poll;
+}
+
+test("PI isolates failed sessions and retires repeatedly failing idle watches", async () => {
+  const hub = new Hub();
+  const events: RelayEvent[] = [];
+  hub.subscribe((event) => events.push(event));
+  const adapter = new PiAdapter(hub);
+  const reads: string[] = [];
+  (adapter as any).invoke = async (operation: string, args: any[]) => {
+    if (operation === "agent/getStatus") return { status: { isRunning: false } };
+    if (operation === "agent/pendingInteractive") return { asks: [], permissions: [] };
+    assert.equal(operation, "session/get");
+    reads.push(args[0].id);
+    if (args[0].id === "bad") throw new Error("session disappeared");
+    return { session: { messageStart: 0, messages: [{ id: "good-reply", role: "assistant", content: "fresh" }] } };
+  };
+  try {
+    adapter.watch("bad");
+    adapter.watch("good");
+    await (adapter as any).poll();
+    assert.deepEqual(reads, ["bad", "good"]);
+    assert.ok(events.some((event) => event.type === "item" && event.sessionId === "pi:good"));
+    for (let index = 0; index < 4; index++) await (adapter as any).poll();
+    assert.equal((adapter as any).watched.has("bad"), false);
+    assert.equal((adapter as any).watched.has("good"), true);
+  } finally { await adapter.stop(); }
+});
+
+test("PI history crosses child-only pages and refreshes a parent tool outside the live window", async () => {
+  const hub = new Hub();
+  const events: RelayEvent[] = [];
+  hub.subscribe((event) => events.push(event));
+  const adapter = new PiAdapter(hub);
+  let running = true;
+  const parent = { id: "parent-tool", role: "tool", toolName: "delegate", toolStatus: "running" };
+  const messages = [
+    { id: "human", role: "user", content: "start" }, parent,
+    ...Array.from({ length: 70 }, (_, index) => ({ id: `child-${index}`, role: "assistant", parentToolCallId: "delegation", content: `step ${index}` })),
+  ];
+  const reads: any[] = [];
+  (adapter as any).invoke = async (operation: string, args: any[]) => {
+    if (operation === "agent/getStatus") return { status: { isRunning: running } };
+    if (operation === "agent/pendingInteractive") return { asks: [], permissions: [] };
+    assert.equal(operation, "session/get");
+    const input = args[0];
+    reads.push(input);
+    const end = input.messageBefore ?? messages.length;
+    const start = Math.max(0, end - input.messageLimit);
+    return { session: { messages: messages.slice(start, end), messageStart: start, hasMoreBefore: start > 0 } };
+  };
+  try {
+    const history = await adapter.history("one", null);
+    assert.equal(history.items.length, 72);
+    assert.equal(history.items[0].kind, "user");
+    assert.equal(history.before, null);
+    assert.equal(history.items.filter((item) => item.parentTaskId === "delegation").length, 70);
+    assert.deepEqual(reads.map((input) => input.messageBefore), [undefined, 12]);
+    await (adapter as any).poll();
+    events.length = 0;
+    parent.toolStatus = "ok";
+    running = false;
+    await (adapter as any).poll();
+    const completion = events.findIndex((event) => event.type === "item" && event.item.id === "parent-tool" && event.item.tool?.status === "ok");
+    const idle = events.findIndex((event) => event.type === "status" && event.status === "idle");
+    assert.ok(completion >= 0 && idle > completion, "parent completion is delivered before idle");
+    assert.ok(reads.some((input) => input.messageBefore === 2 && input.messageLimit === 1));
+    assert.equal((adapter as any).watched.get("one").active.has("parent-tool"), false);
+    const before = reads.length;
+    await (adapter as any).poll();
+    assert.equal(reads.slice(before).some((input) => input.messageBefore === 2), false, "finished tools no longer need point reads");
+  } finally { await adapter.stop(); }
+});
+
+test("PI idle watches use status-only slow polls and all session probes share four slots", async () => {
+  const adapter = new PiAdapter(new Hub());
+  const details: string[] = [];
+  const statuses: string[] = [];
+  let concurrent = 0;
+  let peak = 0;
+  (adapter as any).invoke = async (operation: string, args: any[]) => {
+    if (operation === "agent/getStatus") {
+      statuses.push(args[0]);
+      peak = Math.max(peak, ++concurrent);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      concurrent--;
+      return { status: { isRunning: args[0] === "running" } };
+    }
+    if (operation === "agent/pendingInteractive") return { asks: [], permissions: [] };
+    assert.equal(operation, "session/get");
+    details.push(args[0].id);
+    return { session: { messageStart: 0, messages: [] } };
+  };
+  try {
+    for (const id of ["idle-1", "idle-2", "idle-3", "idle-4", "idle-5", "running"]) {
+      adapter.watch(id);
+      (adapter as any).watched.get(id).activeUntil = 0;
+    }
+    (adapter as any).watched.get("running").running = true;
+    (adapter as any).pollRound = 4;
+    await (adapter as any).poll();
+    assert.equal(statuses.length, 6);
+    assert.deepEqual(details, ["running"]);
+    assert.equal(peak, 4);
+    statuses.length = 0;
+    details.length = 0;
+    await (adapter as any).poll();
+    assert.deepEqual(statuses, ["running"]);
+    assert.deepEqual(details, ["running"]);
+  } finally { await adapter.stop(); }
+});
+
+test("PI send coalesces an immediate refresh with an older poll without applying its stale idle", async () => {
+  const hub = new Hub();
+  const events: RelayEvent[] = [];
+  hub.subscribe((event) => events.push(event));
+  const adapter = new PiAdapter(hub);
+  let release!: () => void;
+  const oldStatus = new Promise<void>((resolve) => { release = resolve; });
+  let statusReads = 0;
+  let detailReads = 0;
+  (adapter as any).invoke = async (operation: string) => {
+    if (operation === "agent/getStatus") {
+      const read = ++statusReads;
+      if (read === 1) await oldStatus;
+      return { status: { isRunning: read >= 3 } };
+    }
+    if (operation === "agent/prompt") return { accepted: true };
+    if (operation === "agent/pendingInteractive") return { asks: [], permissions: [] };
+    assert.equal(operation, "session/get");
+    detailReads++;
+    return { session: { messageStart: 0, messages: [{ id: "fresh", role: "assistant", content: "arrived" }] } };
+  };
+  try {
+    adapter.watch("one");
+    const poll = (adapter as any).poll();
+    await adapter.send("one", "hello");
+    release();
+    await poll;
+    await finishRefresh(adapter, "one");
+    assert.equal(detailReads, 1, "only the post-send poll reads the transcript");
+    assert.equal(statusReads, 3);
+    assert.ok(events.some((event) => event.type === "item" && event.item.id === "fresh"));
+    assert.equal(events.some((event) => event.type === "status" && event.status === "idle"), false);
+  } finally { release(); await adapter.stop(); }
+});
+
+test("PI stop ignores an in-flight transcript response", async () => {
+  const hub = new Hub();
+  const events: RelayEvent[] = [];
+  hub.subscribe((event) => events.push(event));
+  const adapter = new PiAdapter(hub);
+  let release!: () => void;
+  let entered!: () => void;
+  const ready = new Promise<void>((resolve) => { entered = resolve; });
+  const response = new Promise<void>((resolve) => { release = resolve; });
+  (adapter as any).invoke = async (operation: string) => {
+    if (operation === "agent/getStatus") return { status: { isRunning: true } };
+    assert.equal(operation, "session/get");
+    entered();
+    await response;
+    return { session: { messageStart: 0, messages: [{ id: "late", role: "assistant", content: "ignore" }] } };
+  };
+  try {
+    adapter.watch("one");
+    const poll = (adapter as any).poll();
+    await ready;
+    await adapter.stop();
+    release();
+    await poll;
+    assert.equal(events.some((event) => event.type === "item" || event.type === "status"), false);
+  } finally { release(); await adapter.stop(); }
+});
+
+test("PI session list returns cached status without awaiting a slow upstream probe", async () => {
+  const hub = new Hub();
+  const adapter = new PiAdapter(hub);
+  let release!: () => void;
+  const delayed = new Promise<void>((resolve) => { release = resolve; });
+  (adapter as any).invoke = async (operation: string) => {
+    if (operation === "session/list") return { sessions: [{ id: "one", title: "T" }] };
+    if (operation === "agent/pendingInteractive") return { asks: [], permissions: [] };
+    assert.equal(operation, "agent/getStatus");
+    await delayed;
+    return { status: { isRunning: true } };
+  };
+  try {
+    const start = Date.now();
+    const list = await adapter.listSessions();
+    assert.ok(Date.now() - start < 500);
+    assert.equal(list[0].status, "unknown");
+    assert.equal(hub.liveStatus("pi:one"), undefined);
+    release();
+    await (adapter as any).statusProbe;
+    assert.equal(hub.liveStatus("pi:one"), "running");
+    assert.equal((await adapter.listSessions())[0].status, "running");
+  } finally { release(); await adapter.stop(); }
+});
+
+test("PI new sessions configure before prompt without redundant status or history reads", async () => {
+  const hub = new Hub();
+  const events: RelayEvent[] = [];
+  hub.subscribe((event) => events.push(event));
+  const adapter = new PiAdapter(hub);
+  const calls: { operation: string; args: any[]; confirm: boolean }[] = [];
+  (adapter as any).invoke = async (operation: string, args: any[] = [], confirm = false) => {
+    calls.push({ operation, args, confirm });
+    if (operation === "providers/list") return { providers: [{ id: "provider", name: "P", enabled: true, models: [{ id: "model", defaultThinkingLevel: "low", thinkingLevels: ["low"] }] }] };
+    if (operation === "providers/listModels") return { models: [] };
+    if (operation === "settings/get") return { settings: { defaultProviderId: "provider", defaultModelId: "model" } };
+    if (operation === "session/create") return { session: { id: "new" } };
+    if (operation === "session/configure" || operation === "agent/prompt") return { ok: true };
+    if (operation === "agent/getStatus") return { status: { isRunning: true } };
+    if (operation === "agent/pendingInteractive") return { asks: [], permissions: [] };
+    if (operation === "session/get") return { session: { messageStart: 0, messages: [{ id: "new-reply", role: "assistant", content: "hello" }] } };
+    throw new Error(`unexpected ${operation}`);
+  };
+  try {
+    const id = await adapter.create("/workspace", "hello", { model: JSON.stringify(["provider", "model"]), thinking: "low", permissionMode: "ask" });
+    assert.equal(id, "new");
+    assert.ok(calls.length <= 7);
+    assert.equal(calls.some((call) => call.operation === "session/get" || call.operation === "agent/getStatus"), false);
+    const configure = calls.findIndex((call) => call.operation === "session/configure");
+    const prompt = calls.findIndex((call) => call.operation === "agent/prompt");
+    assert.ok(configure >= 0 && configure < prompt);
+    assert.deepEqual(calls[configure], { operation: "session/configure", args: ["new", { mode: "agent", providerId: "provider", modelId: "model", thinkingLevel: "low", permissionMode: "ask" }], confirm: true });
+    await finishRefresh(adapter, "new");
+    assert.ok(events.some((event) => event.type === "item" && event.item.id === "new-reply"), "creation refreshes without waiting for the periodic timer");
+  } finally { await adapter.stop(); }
+});
+
 test("PI control envelopes, running state, equal-length edits and interactive resolution", async () => {
   const dir = mkdtempSync(join(tmpdir(), "aw-pi-test-"));
   const events: RelayEvent[] = [];
   const calls: any[] = [];
   let text = "first";
   let pending = true;
+  let initializations = 0;
   const server = createServer(async (req, res) => {
     assert.equal(req.headers.authorization, "Bearer local-test-token");
     const chunks = [];
@@ -22,6 +256,7 @@ test("PI control envelopes, running state, equal-length edits and interactive re
     res.setHeader("content-type", "application/json");
     if (body.method === "notifications/initialized") { res.writeHead(202); res.end(); return; }
     if (body.method === "initialize") {
+      initializations++;
       res.setHeader("mcp-session-id", "test-session");
       res.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: {} })); return;
     }
@@ -49,7 +284,10 @@ test("PI control envelopes, running state, equal-length edits and interactive re
   const hub = new Hub(); hub.subscribe((event) => events.push(event));
   const adapter = new PiAdapter(hub, dir);
   try {
-    assert.equal((await adapter.listSessions()).length, 1);
+    const lists = await Promise.all([adapter.listSessions(), adapter.listSessions()]);
+    assert.deepEqual(lists.map((list) => list.length), [1, 1]);
+    assert.equal(initializations, 1, "concurrent readers share MCP initialization");
+    await (adapter as any).statusProbe;
     const history = await adapter.history("one", null);
     assert.deepEqual(calls.filter((call) => call.name === "pi_session_get").map((call) => call.input.messageLimit), [60, 30]);
     assert.equal(history.items[0]?.text, "first");
@@ -76,7 +314,15 @@ test("PI control envelopes, running state, equal-length edits and interactive re
 
 test("PI mapping hides internal evidence and preserves tools and reasoning", () => {
   assert.deepEqual(mapPiMessage({ id: "x", role: "system", modelSystem: {}, content: "hidden" }), []);
-  assert.deepEqual(mapPiMessage({ id: "x", parentToolCallId: "delegate", role: "tool" }), []);
+  const child = mapPiMessage({ id: "x", parentToolCallId: "delegate", role: "assistant", thinking: "child thought", content: "child answer" });
+  assert.deepEqual(child.map(({ id, kind, taskId, parentTaskId }) => ({ id, kind, taskId, parentTaskId })), [
+    { id: "x:thinking", kind: "reasoning", taskId: "delegate", parentTaskId: "delegate" },
+    { id: "x", kind: "assistant", taskId: "delegate", parentTaskId: "delegate" },
+  ]);
+  assert.equal(child[0].speaker, undefined, "do not fabricate an upstream subagent name");
+  assert.equal(mapPiMessage({ id: "u", parentToolCallId: 42, role: "user", content: "task input" })[0].kind, "system");
+  assert.equal(mapPiMessage({ id: "u", parentToolCallId: 42, role: "user", content: "task input" })[0].taskId, "42");
+  assert.equal(mapPiMessage({ id: "t", parentToolCallId: "delegate", role: "tool", toolStatus: "running" })[0].parentTaskId, "delegate");
   assert.deepEqual(mapPiMessage({ id: "a", role: "assistant", thinking: "think", content: "answer" }).map((item) => item.kind), ["reasoning", "assistant"]);
   assert.equal(mapPiMessage({ id: "t", role: "tool", toolName: "Bash", toolArgs: { command: "pwd" }, toolResult: "ok", toolStatus: "denied" })[0]?.tool?.status, "denied");
 });
@@ -103,6 +349,7 @@ test("PI desktop without pendingInteractive reports a visible approval warning",
   try {
     assert.equal(adapter.availability().warning, undefined);
     assert.equal((await adapter.listSessions()).length, 1);
+    await (adapter as any).statusProbe;
     const availability = adapter.availability();
     assert.equal(availability.ok, true);
     assert.match(availability.warning ?? "", /pendingInteractive/);
@@ -186,10 +433,12 @@ test("PI messages sent while running steer the turn, queue it, or use a graceful
     await adapter.send("one", "more");
     assert.deepEqual(ops(), ["agent/getStatus", "agent/steer"]);
     assert.deepEqual(calls[1].args, [{ sessionId: "one", content: "more", expectedTurnId: "turn-7" }]);
+    await finishRefresh(adapter, "one");
     calls.length = 0;
     steerEnded = true;
     await adapter.send("one", "late");
     assert.deepEqual(ops(), ["agent/getStatus", "agent/steer", "agent/queue/push"]);
+    await finishRefresh(adapter, "one");
     calls.length = 0;
     steerEnded = false;
     exposed = new Set();
@@ -197,9 +446,11 @@ test("PI messages sent while running steer the turn, queue it, or use a graceful
     await adapter.send("one", "x");
     assert.deepEqual(ops(), ["agent/getStatus", "agent/steer", "agent/queue/push", "agent/stop"]);
     assert.deepEqual(calls.at(-1)!.args, [{ sessionId: "one", turnId: "turn-7" }]);
+    await finishRefresh(adapter, "one");
     calls.length = 0;
     await adapter.send("one", "y");
     assert.deepEqual(ops(), ["agent/getStatus", "agent/stop"], "unsupported operations are not retried");
+    await finishRefresh(adapter, "one");
     calls.length = 0;
     await (adapter as any).poll();
     assert.ok(!ops().includes("agent/prompt"), "nothing is sent while PI still runs");

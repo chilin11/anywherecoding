@@ -15,7 +15,9 @@ const PROTOCOL = "2025-06-18";
 const POLL_MS = 1500;
 export const PENDING_UNSUPPORTED = "当前 PI-Desktop 未开放待审批查询（agent/pendingInteractive），网页收不到工具权限请求和提问，需在桌面上处理";
 const WATCH_TTL_MS = 2 * 60_000;
+const ACTIVE_WATCH_MS = 90_000;
 const PAGE = 60;
+const READ_OPERATIONS = new Set(["session/get", "session/list", "agent/getStatus", "agent/pendingInteractive", "providers/list", "providers/listModels", "settings/get"]);
 
 class McpError extends Error {
   readonly code: string | undefined;
@@ -28,6 +30,7 @@ class McpError extends Error {
 /** Minimal Streamable-HTTP MCP client for PI-Desktop's local control plane. */
 class PiControl {
   private session: string | null = null;
+  private initializing: Promise<void> | null = null;
   private nextId = 1;
   readonly url: string;
   private readonly token: string;
@@ -37,7 +40,7 @@ class PiControl {
     this.token = token;
   }
 
-  private async post(body: Json): Promise<{ status: number; json: Json | null; session: string | null }> {
+  private async post(body: Json, timeout = 8000): Promise<{ status: number; json: Json | null; session: string | null }> {
     const response = await fetch(this.url, {
       method: "POST",
       headers: {
@@ -48,7 +51,7 @@ class PiControl {
         ...(this.session ? { "mcp-session-id": this.session } : {}),
       },
       body: JSON.stringify({ jsonrpc: "2.0", ...body }),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(timeout),
     });
     const text = await response.text();
     return { status: response.status, json: text ? JSON.parse(text) : null, session: response.headers.get("mcp-session-id") };
@@ -68,15 +71,19 @@ class PiControl {
 
   async invoke(operation: string, args: unknown[] = [], confirm = false): Promise<any> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      if (!this.session) await this.initialize();
+      if (!this.session) {
+        this.initializing ??= this.initialize().finally(() => { this.initializing = null; });
+        await this.initializing;
+      }
+      const session = this.session;
       const result = await this.post({
         id: this.nextId++,
         method: "tools/call",
         params: { name: operation === "session/get" ? "pi_session_get" : "pi_desktop_invoke", arguments: operation === "session/get" ? args[0] : { operation, args, ...(confirm ? { confirm: true } : {}) } },
-      });
+      }, READ_OPERATIONS.has(operation) ? 8000 : 30_000);
       if (result.status === 404 || result.status === 400) {
         // Desktop restarted and forgot our MCP session.
-        this.session = null;
+        if (this.session === session) this.session = null;
         continue;
       }
       if (result.status !== 200 || !result.json) throw new McpError(`PI-Desktop 控制口错误 (${result.status})`);
@@ -111,13 +118,17 @@ function piToolInput(args: unknown): string {
 
 /** Map a PI-Desktop UiMessage to one or two relay items (thinking is split out). */
 export function mapPiMessage(message: Json): Item[] {
-  if (message.modelSystem || message.parentToolCallId) return [];
+  if (message.modelSystem) return [];
+  const parent = message.parentToolCallId == null ? null : String(message.parentToolCallId);
   const ts = message.createdAt ? Date.parse(message.createdAt) : undefined;
-  const base = { ...(ts ? { ts } : {}), ...(message.status === "streaming" ? { streaming: true } : {}) };
+  const base = {
+    ...(ts ? { ts } : {}), ...(message.status === "streaming" ? { streaming: true } : {}),
+    ...(parent !== null ? { taskId: parent, parentTaskId: parent } : {}),
+  };
   switch (message.role) {
     case "user": {
       const attachments = (message.attachments ?? []).length ? `\n[附件 ×${message.attachments.length}]` : "";
-      return [{ id: message.id, kind: "user", text: `${message.command ?? message.content ?? ""}${attachments}`, images: extractImages(message.attachments), ...base }];
+      return [{ id: message.id, kind: parent === null ? "user" : "system", text: `${message.command ?? message.content ?? ""}${attachments}`, images: extractImages(message.attachments), ...base }];
     }
     case "assistant": {
       const items: Item[] = [];
@@ -160,7 +171,11 @@ function signature(item: Item): string {
 }
 
 /** settle: extra polls after a turn ends, so a final reply persisted just after isRunning flips still arrives. */
-type Watched = { until: number; seen: Map<string, string>; running: boolean; settle: number };
+type Watched = {
+  until: number; activeUntil: number; seen: Map<string, string>; active: Map<string, number>;
+  running: boolean; settle: number; failures: number; revision: number;
+  poll: Promise<void> | null; refresh: boolean; scheduled: boolean;
+};
 const SETTLE_POLLS = 4;
 
 export class PiAdapter implements Adapter {
@@ -184,6 +199,10 @@ export class PiAdapter implements Adapter {
   private outboxSeq = 0;
   private catalogCache: { until: number; models: ModelOption[] } | null = null;
   private statusesUntil = 0;
+  private statusProbe: Promise<void> | null = null;
+  private pollRound = 0;
+  private pollSlots = 0;
+  private readonly pollWaiters: (() => void)[] = [];
   private readonly observedStatuses = new Map<string, boolean>();
   private stopped = false;
 
@@ -331,21 +350,12 @@ export class PiAdapter implements Adapter {
 
   async listSessions(): Promise<SessionSummary[]> {
     const result = await this.invoke("session/list");
-    const sessions: Json[] = result?.sessions ?? [];
-    // Learn up front whether approvals are visible, instead of only after a watched session polls.
-    if (this.pendingSupported === null && sessions[0]?.id) await this.pollPending(String(sessions[0].id)).catch(() => undefined);
-    if (this.statusesUntil < Date.now()) {
+    const sessions: Json[] = (result?.sessions ?? []).filter((session: Json) => !session.scheduledRun && session.source !== "pi-native" && !String(session.id).startsWith("native-"));
+    // Status and capability probes must not hold up the shared session list response.
+    if (!this.stopped && !this.statusProbe && this.statusesUntil < Date.now()) {
       this.statusesUntil = Date.now() + 8000;
-      const recent = sessions.filter((session) => !session.scheduledRun && session.source !== "pi-native" && !String(session.id).startsWith("native-"))
-        .sort((left, right) => (Date.parse(right.updatedAt) || 0) - (Date.parse(left.updatedAt) || 0)).slice(0, 30);
-      for (let offset = 0; offset < recent.length; offset += 5) {
-        await Promise.allSettled(recent.slice(offset, offset + 5).map(async (session) => {
-          const result = await this.invoke("agent/getStatus", [session.id]);
-          const running = Boolean(result?.status?.isRunning);
-          this.observedStatuses.set(session.id, running);
-          this.hub.status(sessionKey(this.agent, session.id), running ? "running" : "idle");
-        }));
-      }
+      const recent = [...sessions].sort((left, right) => (Date.parse(right.updatedAt) || 0) - (Date.parse(left.updatedAt) || 0)).slice(0, 30);
+      this.statusProbe = this.refreshStatuses(recent).finally(() => { this.statusProbe = null; });
     }
     return sessions
       // Codex/Claude transcripts PI-Desktop merely imported are listed by their own adapters.
@@ -365,6 +375,28 @@ export class PiAdapter implements Adapter {
       });
   }
 
+  private async refreshStatuses(sessions: Json[]): Promise<void> {
+    if (this.pendingSupported === null && sessions[0]?.id) {
+      await this.pollPending(String(sessions[0].id)).catch(() => undefined);
+    }
+    for (let offset = 0; !this.stopped && offset < sessions.length; offset += 4) {
+      await Promise.allSettled(sessions.slice(offset, offset + 4).map(async (session) => {
+        const sessionId = String(session.id);
+        const state = this.watched.get(sessionId);
+        if (state) return this.pollWatched(sessionId, state, true);
+        await this.withPollSlot(async () => {
+          if (this.stopped || this.watched.has(sessionId)) return;
+          const result = await this.invoke("agent/getStatus", [sessionId]);
+          // A watch/send that arrived during this read owns the newer observation.
+          if (this.stopped || this.watched.has(sessionId)) return;
+          const running = Boolean(result?.status?.isRunning);
+          this.observedStatuses.set(sessionId, running);
+          this.hub.status(sessionKey(this.agent, sessionId), running ? "running" : "idle");
+        });
+      }));
+    }
+  }
+
   private async detail(sessionId: string, before: string | null, limit: number): Promise<Json> {
     for (let count = limit; count >= 1; count = Math.floor(count / 2)) {
       try {
@@ -379,17 +411,37 @@ export class PiAdapter implements Adapter {
   }
 
   async history(sessionId: string, before: string | null): Promise<History> {
-    const detail = await this.detail(sessionId, before, PAGE);
-    const items = (detail.messages ?? []).flatMap(mapPiMessage);
+    let detail = await this.detail(sessionId, before, PAGE);
+    let items: Item[] = [];
+    const pages: Json[] = [];
+    for (let page = 0; ; page++) {
+      pages.push(detail);
+      items = [...(detail.messages ?? []).flatMap(mapPiMessage), ...items];
+      const start = detail.messageStart;
+      if (items.some((item) => item.parentTaskId === undefined) || !detail.hasMoreBefore || !(start > 0) || page >= 4) break;
+      const older = await this.detail(sessionId, String(start), PAGE);
+      if (!(older.messageStart < start)) break; // A malformed cursor must not loop forever.
+      detail = older;
+    }
     this.watch(sessionId);
-    const start: number | undefined = detail?.messageStart;
-    return { items, before: detail?.hasMoreBefore && start ? String(start) : null };
+    const state = this.watched.get(sessionId)!;
+    // Remember unfinished messages seen in history, without replacing fresher live observations.
+    for (const page of pages) this.rememberActive(state, page, true);
+    const start: number | undefined = detail.messageStart;
+    return { items, before: detail.hasMoreBefore && start ? String(start) : null };
   }
 
   watch(sessionId: string): void {
     const existing = this.watched.get(sessionId);
-    if (existing) existing.until = Date.now() + WATCH_TTL_MS;
-    else this.watched.set(sessionId, { until: Date.now() + WATCH_TTL_MS, seen: new Map(), running: false, settle: 0 });
+    const now = Date.now();
+    if (existing) {
+      existing.until = now + WATCH_TTL_MS;
+      existing.activeUntil = now + ACTIVE_WATCH_MS;
+    } else this.watched.set(sessionId, {
+      until: now + WATCH_TTL_MS, activeUntil: now + ACTIVE_WATCH_MS,
+      seen: new Map(), active: new Map(), running: this.observedStatuses.get(sessionId) ?? false, settle: 0,
+      failures: 0, revision: 0, poll: null, refresh: false, scheduled: false,
+    });
   }
 
   async send(sessionId: string, text: string): Promise<void> {
@@ -405,9 +457,17 @@ export class PiAdapter implements Adapter {
         await this.addToRunningTurn(sessionId, text, fresh?.currentTurnId);
       }
     }
+    this.sent(sessionId);
+  }
+
+  private sent(sessionId: string): void {
     this.watch(sessionId);
-    this.watched.get(sessionId)!.running = true;
+    const state = this.watched.get(sessionId)!;
+    state.revision++;
+    state.running = true;
+    this.observedStatuses.set(sessionId, true);
     this.hub.status(sessionKey(this.agent, sessionId), "running");
+    this.scheduleRefresh(sessionId, state);
   }
 
   /**
@@ -482,12 +542,30 @@ export class PiAdapter implements Adapter {
   }
 
   async create(cwd: string, text: string, config?: SessionConfigPatch): Promise<string> {
-    if (config && Object.keys(config).length) validateConfigPatch(config, await this.configuration(null));
+    const current = config && Object.keys(config).length ? await this.configuration(null) : null;
+    if (current && config) validateConfigPatch(config, current);
     const result = await this.invoke("session/create", [{ projectPath: cwd, mode: "agent" }]);
     const sessionId: string | undefined = result?.session?.id ?? result?.id;
     if (!sessionId) throw new Error("PI-Desktop 未返回会话 id");
-    if (config && Object.keys(config).length) await this.configure(sessionId, config);
-    await this.send(sessionId, text);
+    if (current && config) {
+      const native: Json = { mode: "agent" };
+      if (config.model !== undefined) {
+        const model = config.model ?? current.model;
+        if (!model) throw invalidConfig("请先在 PI-Desktop 配置默认模型");
+        [native.providerId, native.modelId] = JSON.parse(model);
+        native.thinkingLevel = current.models.find((option) => option.value === model)?.defaultThinking ?? "omit";
+      }
+      if (config.thinking !== undefined) native.thinkingLevel = config.thinking ?? "omit";
+      if (config.permissionMode !== undefined) native.permissionMode = config.permissionMode ?? "inherit";
+      await this.invoke("session/configure", [sessionId, native], true);
+    }
+    try {
+      await this.invoke("agent/prompt", [{ sessionId, content: text }]);
+      this.sent(sessionId);
+    } catch (error) {
+      if ((error as McpError).code !== "AGENT_BUSY" && !/active turn/i.test((error as Error).message)) throw error;
+      await this.send(sessionId, text);
+    }
     this.hub.sessionsChanged();
     return sessionId;
   }
@@ -512,52 +590,137 @@ export class PiAdapter implements Adapter {
     this.hub.forget(sessionKey(this.agent, sessionId));
   }
 
+  /** Share a four-session limit between periodic polls, immediate refreshes and list probes. */
+  private async withPollSlot(work: () => Promise<void>): Promise<void> {
+    if (this.pollSlots < 4) this.pollSlots++;
+    else await new Promise<void>((resolve) => this.pollWaiters.push(resolve));
+    try { await work(); }
+    finally {
+      const next = this.pollWaiters.shift();
+      if (next) next();
+      else this.pollSlots--;
+    }
+  }
+
+  private scheduleRefresh(sessionId: string, state: Watched): void {
+    state.refresh = true;
+    if (state.scheduled) return;
+    state.scheduled = true;
+    setImmediate(() => {
+      state.scheduled = false;
+      if (this.stopped || this.watched.get(sessionId) !== state || state.poll) return;
+      state.refresh = false;
+      void this.pollWatched(sessionId, state);
+    });
+  }
+
+  private pollWatched(sessionId: string, state: Watched, statusOnly = false): Promise<void> {
+    if (state.poll) return state.poll;
+    state.poll = this.withPollSlot(async () => {
+      if (this.stopped || this.watched.get(sessionId) !== state) return;
+      try {
+        await this.pollSession(sessionId, state, statusOnly);
+        state.failures = 0;
+      } catch {
+        // A stale/deleted session must never prevent another session from making progress.
+        if (!this.stopped && this.watched.get(sessionId) === state && ++state.failures >= 5 && !state.running && !this.outbox.has(sessionId)) {
+          this.watched.delete(sessionId);
+        }
+      }
+    }).finally(() => {
+      state.poll = null;
+      if (state.refresh && !state.scheduled && !this.stopped && this.watched.get(sessionId) === state) this.scheduleRefresh(sessionId, state);
+    });
+    return state.poll;
+  }
+
   private async poll(): Promise<void> {
     if (this.stopped || this.polling) return;
     this.polling = true;
     try {
       const now = Date.now();
+      const slowRound = ++this.pollRound % 5 === 0;
+      const polls: Promise<void>[] = [];
       for (const [sessionId, state] of [...this.watched]) {
-        if (state.until < now && !state.running && state.settle <= 0 && !this.outbox.has(sessionId)) {
+        if (state.until < now && !state.running && state.settle <= 0 && !this.outbox.has(sessionId) && !state.poll) {
           this.watched.delete(sessionId);
           continue;
         }
-        await this.pollSession(sessionId, state);
+        const active = state.activeUntil > now || state.running || state.settle > 0 || this.outbox.has(sessionId);
+        if (active || slowRound) polls.push(this.pollWatched(sessionId, state, !active));
       }
-    } catch {
-      // availability() reports the reason; keep polling so we notice the desktop coming back.
+      await Promise.all(polls);
     } finally {
       this.polling = false;
     }
   }
 
-  private async pollSession(sessionId: string, state: Watched): Promise<void> {
-    const key = sessionKey(this.agent, sessionId);
-    const status = await this.invoke("agent/getStatus", [sessionId]);
-    let running = Boolean(status?.status?.isRunning);
-    const detail = await this.detail(sessionId, null, 30);
-    if (this.stopped) return;
-    for (const item of (detail?.messages ?? []).flatMap(mapPiMessage) as Item[]) {
+  private rememberActive(state: Watched, detail: Json, history = false): void {
+    if (!Number.isInteger(detail.messageStart) || detail.messageStart < 0) return;
+    for (const [index, message] of (detail.messages ?? []).entries()) {
+      if (!message.id || message.modelSystem) continue;
+      if (history && (state.active.has(message.id) || mapPiMessage(message).some((item) => state.seen.has(item.id)))) continue;
+      if (message.status === "streaming" || message.status === "running" || message.toolStatus === "running") {
+        state.active.set(message.id, detail.messageStart + index);
+      } else if (!history) state.active.delete(message.id);
+    }
+  }
+
+  private emitDetail(sessionId: string, state: Watched, detail: Json): void {
+    this.rememberActive(state, detail);
+    for (const item of (detail.messages ?? []).flatMap(mapPiMessage) as Item[]) {
       const mark = signature(item);
       if (state.seen.get(item.id) === mark) continue;
       state.seen.set(item.id, mark);
-      this.hub.item(key, item);
+      this.hub.item(sessionKey(this.agent, sessionId), item);
     }
-    await this.pollPending(sessionId);
-    if (!running && await this.drainOutbox(sessionId)) running = true;
-    if (state.running !== running) {
-      state.running = running;
-      state.settle = running ? 0 : SETTLE_POLLS;
-      this.hub.status(key, running ? "running" : "idle");
-    } else if (!running && state.settle > 0) state.settle--;
   }
 
-  private async pollPending(sessionId: string): Promise<void> {
-    if (this.pendingSupported === false) return;
+  private async pollSession(sessionId: string, state: Watched, statusOnly: boolean): Promise<void> {
+    const revision = state.revision;
+    const valid = () => !this.stopped && this.watched.get(sessionId) === state && state.revision === revision;
+    const status = await this.invoke("agent/getStatus", [sessionId]);
+    if (!valid()) return;
+    let running = Boolean(status?.status?.isRunning);
+    let detailed = false;
+    try {
+      if (statusOnly && running === state.running && !state.settle && !this.outbox.has(sessionId)) return;
+      const detail = await this.detail(sessionId, null, 30);
+      if (!valid()) return;
+      this.emitDetail(sessionId, state, detail);
+      detailed = true;
+      // Rotate unfinished messages so the same three long-running tools cannot starve others.
+      const older = [...state.active].filter(([, index]) => index < detail.messageStart).slice(0, 3);
+      for (const [id, index] of older) {
+        state.active.delete(id);
+        state.active.set(id, index);
+        const previous = await this.detail(sessionId, String(index + 1), 1);
+        if (!valid()) return;
+        if (previous.messages?.[0]?.id === id) this.emitDetail(sessionId, state, previous);
+        else state.active.delete(id); // The upstream transcript was rewritten; don't follow the wrong item.
+      }
+      await this.pollPending(sessionId, valid);
+      if (!valid()) return;
+      if (!running && await this.drainOutbox(sessionId)) running = true;
+    } finally {
+      if (valid()) {
+        if (state.running !== running) state.settle = running ? 0 : SETTLE_POLLS;
+        else if (detailed && !running && state.settle > 0) state.settle--;
+        state.running = running;
+        this.observedStatuses.set(sessionId, running);
+        // Items/approvals are projected before idle, including the final reply and completed tools.
+        this.hub.status(sessionKey(this.agent, sessionId), running ? "running" : "idle");
+      }
+    }
+  }
+
+  private async pollPending(sessionId: string, valid = () => !this.stopped): Promise<void> {
+    if (this.pendingSupported === false || !valid()) return;
     let pending: Json;
     try {
       pending = await this.invoke("agent/pendingInteractive", [{ sessionId }]);
     } catch (error) {
+      if (!valid()) return;
       if ((error as McpError).code === "NOT_FOUND") {
         // Desktop builds that do not expose the operation: approvals stay desktop-only.
         this.pendingSupported = false;
@@ -566,8 +729,8 @@ export class PiAdapter implements Adapter {
       }
       throw error;
     }
+    if (!valid()) return;
     this.pendingSupported = true;
-    if (this.stopped) return;
     const key = sessionKey(this.agent, sessionId);
     const live = new Set<string>();
     for (const request of pending?.permissions ?? []) {

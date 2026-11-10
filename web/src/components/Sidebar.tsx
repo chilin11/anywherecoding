@@ -100,7 +100,7 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
     const byProject = new Map<string, SessionSummary[]>();
     for (const session of visible) {
       if (pinnedSet.has(session.id)) continue;
-      const key = session.projectKey ?? session.cwd ?? "";
+      const key = session.cwd ?? "";
       byProject.set(key, [...(byProject.get(key) ?? []), session]);
     }
     return { pinned, groups: [...byProject.entries()] };
@@ -193,7 +193,7 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
         )}
         {groups.map(([key, sessions]) => {
           const cwd = sessions[0]?.cwd ?? "";
-          const label = sessions[0]?.projectLabel || basename(cwd);
+          const label = basename(cwd);
           const isCollapsed = collapsed[key];
           return (
             <div key={key || "-"} className="mb-0.5">
@@ -210,7 +210,7 @@ export function Sidebar({ relay, activeId, onOpen, onNew, onLogout, onConnection
                   <span className="truncate">{label}</span>
                   <span className="ml-auto font-normal text-zinc-400">{sessions.length}</span>
                 </button>
-                {cwd && sessions[0]?.createInProject !== false && <button
+                {cwd && <button
                   onClick={() => onNew(cwd, filter === "all" ? sessions.find((session) => session.id === activeId)?.agent ?? sessions[0]?.agent : filter)}
                   aria-label={`在项目 ${basename(cwd)} 中新建会话`}
                   title={`在 ${shortPath(cwd)} 中新建会话`}

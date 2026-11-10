@@ -4,14 +4,15 @@ import type { SessionConfig, SessionConfigPatch } from "../../../server/session-
 import { api, ApiError } from "../api.ts";
 import type { Relay } from "../store.ts";
 import { AGENT_META, basename, cx, shortPath } from "../util.ts";
-import { configSummary, selectedTarget, SessionConfiguration, SessionTargetPicker, targetSelectionValid } from "./SessionConfiguration.tsx";
+import { configSummary, SessionConfiguration } from "./SessionConfiguration.tsx";
+
+// Keep the first message in memory when the panel is dismissed, never in persistent storage.
+let promptDraft = "";
 
 type Props = {
   relay: Relay;
   initialCwd: string | null;
   initialAgent?: Agent;
-  /** Agent owning initialCwd; backend paths must never seed a local browser. */
-  initialCwdAgent?: Agent;
   projectOnly?: boolean;
   onClose: () => void;
   onCreated: (id: string, agent: Agent, cwd: string, text: string) => void;
@@ -127,25 +128,28 @@ function FolderBrowser({ start, disabled, onPick, onBusyChange }: { start: strin
   );
 }
 
-export function NewSession({ relay, initialCwd, initialAgent, initialCwdAgent = initialAgent, projectOnly = false, onClose, onCreated }: Props) {
+const configurationCache = new Map<Agent, SessionConfig>();
+
+export function NewSession({ relay, initialCwd, initialAgent, projectOnly = false, onClose, onCreated }: Props) {
   const available = relay.agents.filter((agent) => agent.ok).map((agent) => agent.agent);
   const [agent, setAgent] = useState<Agent>(initialAgent && available.includes(initialAgent) ? initialAgent : available[0] ?? "codex");
-  const [cwd, setCwd] = useState<string | null>(null);
-  const [backendPaths, setBackendPaths] = useState<Partial<Record<Agent, string>>>({});
-  const [directorySources, setDirectorySources] = useState<Partial<Record<Agent, "local" | "backend">>>({});
-  const seededDirectory = useRef(false);
-  const [browsing, setBrowsing] = useState(true);
-  const [text, setText] = useState("");
+  const [cwd, setCwd] = useState<string | null>(initialCwd);
+  const [browsing, setBrowsing] = useState(!initialCwd);
+  const [text, setText] = useState(() => promptDraft);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [configuration, setConfiguration] = useState<{ agent: Agent; config: SessionConfig } | null>(null);
+  const [configuration, setConfiguration] = useState<{ agent: Agent; config: SessionConfig } | null>(() => {
+    const config = configurationCache.get(agent);
+    return config ? { agent, config } : null;
+  });
   const [draft, setDraft] = useState<SessionConfigPatch>({});
   const [configError, setConfigError] = useState<string | null>(null);
-  const [configLoading, setConfigLoading] = useState(true);
+  const [configLoading, setConfigLoading] = useState(() => !configurationCache.has(agent));
   const [configReload, setConfigReload] = useState(0);
   const configRequest = useRef<AbortController | null>(null);
   const selectedAgent = useRef(agent);
   const creating = useRef(false);
+  const backdropPressed = useRef(false);
   const prompt = useRef<HTMLTextAreaElement>(null);
   const dialogTitle = useId();
   const [folderBusy, setFolderBusy] = useState(false);
@@ -153,9 +157,21 @@ export function NewSession({ relay, initialCwd, initialAgent, initialCwdAgent = 
   const onFolderBusy = useCallback((value: boolean) => { folderPending.current = value; setFolderBusy(value); }, []);
   const directoryBusy = busy || folderBusy;
 
+  useEffect(() => {
+    if (projectOnly) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.isComposing && !event.defaultPrevented && !creating.current) onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose, projectOnly]);
+
+  function close() {
+    if (!creating.current) onClose();
+  }
+
   function pickFolder(path: string) {
     if (creating.current) return;
-    seededDirectory.current = true;
     setCwd(path);
     setBrowsing(false);
     prompt.current?.focus();
@@ -164,55 +180,32 @@ export function NewSession({ relay, initialCwd, initialAgent, initialCwdAgent = 
   useEffect(() => {
     const controller = new AbortController();
     configRequest.current = controller;
-    setConfiguration(null);
+    const cached = configurationCache.get(agent);
+    setConfiguration(cached ? { agent, config: cached } : null);
     setConfigError(null);
-    setConfigLoading(true);
+    setConfigLoading(!cached);
     void api.agentConfiguration(agent, controller.signal).then((config) => {
       if (!controller.signal.aborted && selectedAgent.current === agent) {
-        if (!seededDirectory.current && initialCwd != null && agent === initialCwdAgent) {
-          seededDirectory.current = true;
-          if (config.directory?.source === "backend") setBackendPaths((previous) => ({ ...previous, [agent]: initialCwd }));
-          else { setCwd(initialCwd); setBrowsing(!initialCwd); }
-        }
-        setDirectorySources((previous) => ({ ...previous, [agent]: config.directory?.source ?? "local" }));
+        configurationCache.set(agent, config);
         setConfiguration({ agent, config });
       }
     }).catch((error) => {
-      if (!controller.signal.aborted && selectedAgent.current === agent) setConfigError(`无法读取默认设置：${(error as Error).message}`);
+      if (!controller.signal.aborted && selectedAgent.current === agent && !cached) setConfigError(`无法读取默认设置：${(error as Error).message}`);
     }).finally(() => {
       if (!controller.signal.aborted && selectedAgent.current === agent) setConfigLoading(false);
     });
     return () => controller.abort();
-  }, [agent, configReload, initialCwd, initialCwdAgent]);
-
-  // Classify path namespaces before offering cross-agent recent/initial projects.
-  const directoryAgents = [...new Set([...relay.sessions.map((session) => session.agent), ...(initialCwdAgent ? [initialCwdAgent] : [])])].sort().join(",");
-  useEffect(() => {
-    const controller = new AbortController();
-    for (const entry of directoryAgents.split(",").filter(Boolean) as Agent[]) {
-      if (entry === selectedAgent.current) continue;
-      void api.agentConfiguration(entry, controller.signal).then((config) => {
-        if (!controller.signal.aborted && entry !== selectedAgent.current) setDirectorySources((previous) => ({ ...previous, [entry]: config.directory?.source ?? "local" }));
-      }).catch(() => { /* Unknown namespaces are never offered to the local browser. */ });
-    }
-    return () => controller.abort();
-  }, [directoryAgents]);
-
-  useEffect(() => {
-    if (seededDirectory.current || initialCwd == null || !initialCwdAgent || directorySources[initialCwdAgent] !== "local" || configuration?.agent !== agent || configuration.config.directory?.source === "backend") return;
-    seededDirectory.current = true;
-    setCwd(initialCwd);
-    setBrowsing(!initialCwd);
-  }, [agent, configuration, directorySources, initialCwd, initialCwdAgent]);
+  }, [agent, configReload]);
 
   function chooseAgent(next: Agent) {
     if (creating.current || next === agent) return;
     configRequest.current?.abort();
     selectedAgent.current = next;
-    setConfiguration(null);
+    const cached = configurationCache.get(next);
+    setConfiguration(cached ? { agent: next, config: cached } : null);
     setDraft({});
     setConfigError(null);
-    setConfigLoading(true);
+    setConfigLoading(!cached);
     setError(null);
     setAgent(next);
   }
@@ -227,27 +220,24 @@ export function NewSession({ relay, initialCwd, initialAgent, initialCwdAgent = 
   const recent = useMemo(() => {
     const seen = new Set<string>();
     for (const session of relay.sessions) {
-      if (directorySources[session.agent] === "local" && session.cwd && !session.cwd.includes("/scratch") && !seen.has(session.cwd)) seen.add(session.cwd);
+      if (session.cwd && !session.cwd.includes("/scratch") && !seen.has(session.cwd)) seen.add(session.cwd);
       if (seen.size >= 8) break;
     }
     return [...seen];
-  }, [relay.sessions, directorySources]);
+  }, [relay.sessions]);
 
-  const backendDirectory = config?.directory?.source === "backend";
-  const directoryOptional = config ? selectedTarget(config)?.directory === "optional" : false;
-  const sessionCwd = backendDirectory ? (backendPaths[agent] ?? "").trim() : cwd ?? "";
-  const directoryValid = Boolean(sessionCwd) || directoryOptional;
-  const targetValid = config ? targetSelectionValid(config) : false;
+  const sessionCwd = cwd ?? "";
+  const directoryValid = Boolean(sessionCwd);
 
   async function create() {
-    if (!directoryValid || !targetValid || !text.trim() || creating.current || folderPending.current || selectedAgent.current !== agent || !config || configLoading || configError || !available.includes(agent)) return;
+    if (!directoryValid || !text.trim() || creating.current || folderPending.current || selectedAgent.current !== agent || !config || configLoading || configError || !available.includes(agent)) return;
     creating.current = true;
     setBusy(true);
     setError(null);
     try {
       const choices: SessionConfigPatch = { model: config.model, thinking: config.thinking, permissionMode: config.permissionMode };
-      if (config.targets !== undefined) choices.targetId = config.targetId ?? null;
       const { id } = await api.create(agent, sessionCwd, text.trim(), choices);
+      if (promptDraft === text) promptDraft = "";
       onCreated(id, agent, sessionCwd, text.trim());
     } catch (failure) {
       setError(`无法创建会话：${(failure as Error).message}`);
@@ -256,10 +246,12 @@ export function NewSession({ relay, initialCwd, initialAgent, initialCwdAgent = 
     }
   }
 
-  const ready = directoryValid && targetValid && Boolean(text.trim()) && !directoryBusy && available.includes(agent) && Boolean(config) && !configLoading && !configError;
+  const ready = directoryValid && Boolean(text.trim()) && !directoryBusy && available.includes(agent) && Boolean(config) && !configLoading && !configError;
 
   return (
-    <div className={projectOnly ? "scroll-thin h-full overflow-y-auto" : "fixed inset-0 z-40 flex items-end justify-center bg-black/40 sm:items-center sm:p-4"} onClick={projectOnly ? undefined : onClose}>
+    <div className={projectOnly ? "scroll-thin h-full overflow-y-auto" : "fixed inset-0 z-40 flex items-end justify-center bg-black/40 sm:items-center sm:p-4"}
+      onPointerDown={projectOnly ? undefined : (event) => { backdropPressed.current = event.target === event.currentTarget; }}
+      onClick={projectOnly ? undefined : (event) => { if (backdropPressed.current && event.target === event.currentTarget) close(); backdropPressed.current = false; }}>
       <div
         onClick={(event) => event.stopPropagation()}
         role={projectOnly ? "region" : "dialog"} aria-modal={projectOnly ? undefined : true} aria-labelledby={dialogTitle}
@@ -267,8 +259,8 @@ export function NewSession({ relay, initialCwd, initialAgent, initialCwdAgent = 
       >
         {!projectOnly && <div aria-hidden="true" className="mx-auto -mt-1 h-1 w-10 shrink-0 rounded-full bg-zinc-300 sm:hidden dark:bg-zinc-700" />}
         <div className="flex items-center gap-2">
-          <div className="min-w-0"><h2 id={dialogTitle} className="text-lg font-semibold">新会话</h2>{projectOnly && config && <p className="truncate text-xs text-zinc-500" title={sessionCwd}>{backendDirectory ? "电脑端项目：" : "📁 "}{backendDirectory ? sessionCwd || "无项目" : shortPath(sessionCwd) || "无项目"}</p>}</div>
-          <button onClick={onClose} aria-label="关闭新会话" className="ml-auto flex size-10 shrink-0 items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800">✕</button>
+          <div className="min-w-0"><h2 id={dialogTitle} className="text-lg font-semibold">新会话</h2>{projectOnly && <p className="truncate text-xs text-zinc-500" title={sessionCwd}>📁 {shortPath(sessionCwd) || "无项目"}</p>}</div>
+          <button onClick={close} disabled={busy} aria-label="关闭新会话" className="ml-auto flex size-10 shrink-0 items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 disabled:opacity-40 dark:hover:bg-zinc-800">✕</button>
         </div>
 
         <div className="space-y-1.5">
@@ -293,35 +285,13 @@ export function NewSession({ relay, initialCwd, initialAgent, initialCwdAgent = 
           </div>
         </div>
 
-        {config && <SessionTargetPicker config={config} disabled={directoryBusy || configLoading} onChange={(patch) => setDraft((previous) => ({ ...previous, ...patch }))} />}
-
-        {config && backendDirectory && <div className="space-y-1.5">
-          <div className="flex items-center gap-2 text-xs font-medium text-zinc-500">
-            电脑端项目（后端）
-            {directoryOptional && <button disabled={directoryBusy} aria-pressed={!sessionCwd} onClick={() => setBackendPaths((previous) => ({ ...previous, [agent]: "" }))} className="ml-auto min-h-8 rounded-md px-2 text-zinc-700 hover:bg-zinc-100 disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800">不使用项目文件夹</button>}
-          </div>
-          {!!config.directory?.projects?.length && <div className="flex flex-wrap gap-1.5" aria-label="后端项目">
-            {config.directory.projects.map((project) => <button key={project.path} disabled={directoryBusy} aria-pressed={sessionCwd === project.path} title={project.path}
-              onClick={() => setBackendPaths((previous) => ({ ...previous, [agent]: project.path }))}
-              className={cx("min-h-8 max-w-full truncate rounded-lg border px-2 text-xs", sessionCwd === project.path ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900" : "border-zinc-200 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800")}>{project.label}</button>)}
-          </div>}
-          <label htmlFor={`${dialogTitle}-backend-path`} className="block text-xs text-zinc-500">手动输入电脑端项目路径</label>
-          <input id={`${dialogTitle}-backend-path`} value={backendPaths[agent] ?? ""} disabled={directoryBusy}
-            onChange={(event) => setBackendPaths((previous) => ({ ...previous, [agent]: event.target.value }))}
-            placeholder={directoryOptional ? "留空则不使用项目" : "输入后端电脑上的项目完整路径"} aria-describedby={`${dialogTitle}-backend-hint`}
-            className="min-h-9 w-full rounded-lg border border-zinc-200 bg-transparent px-3 py-1 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:border-zinc-700" />
-          <p id={`${dialogTitle}-backend-hint`} className="text-[11px] text-zinc-500">路径属于运行后端的电脑；不会浏览或创建 AnywhereCoding 本机文件夹。{!sessionCwd && directoryOptional && " 当前不使用项目文件夹。"}</p>
-        </div>}
-
-        {config && !backendDirectory && (!projectOnly || !cwd || directoryOptional) && <div className="space-y-1.5">
+        {(!projectOnly || !cwd) && <div className="space-y-1.5">
           <div className="flex items-center text-xs font-medium text-zinc-500">
             项目文件夹（本机）
-            {directoryOptional && <button disabled={directoryBusy} aria-pressed={!sessionCwd} onClick={() => pickFolder("")} className="ml-auto min-h-8 rounded-md px-2 text-zinc-700 hover:bg-zinc-100 disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800">不使用项目文件夹</button>}
             {!browsing && (
               <button disabled={directoryBusy} onClick={() => setBrowsing(true)} className="ml-auto min-h-8 rounded-md px-2 text-zinc-700 hover:bg-zinc-100 disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800">浏览…</button>
             )}
           </div>
-          {!cwd && !browsing && directoryOptional && <p className="px-3 py-2 text-sm text-zinc-500">无项目文件夹</p>}
           {cwd && !browsing && <div className="truncate rounded-lg bg-zinc-100 px-3 py-2 font-mono text-sm dark:bg-zinc-800" title={cwd}>📁 {shortPath(cwd)}</div>}
           {cwd && !browsing && <CreateFolder key={cwd} parent={cwd} disabled={busy} onPick={pickFolder} onBusyChange={onFolderBusy} />}
           {!browsing && recent.length > 0 && (
@@ -358,7 +328,7 @@ export function NewSession({ relay, initialCwd, initialAgent, initialCwdAgent = 
             autoFocus
             disabled={busy}
             value={text}
-            onChange={(event) => setText(event.target.value)}
+            onChange={(event) => { promptDraft = event.target.value; setText(event.target.value); }}
             onKeyDown={(event) => {
               if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) {
                 event.preventDefault();
@@ -398,7 +368,7 @@ export function NewSession({ relay, initialCwd, initialAgent, initialCwdAgent = 
           >
             {busy ? "发送中…" : projectOnly ? "发送" : "开始"}
           </button>
-          {config && !directoryValid && <p className="mt-1.5 text-center text-[11px] text-zinc-500">{backendDirectory ? "先选择后端项目或输入电脑端路径" : "先选择项目文件夹"}</p>}
+          {config && !directoryValid && <p className="mt-1.5 text-center text-[11px] text-zinc-500">先选择项目文件夹</p>}
         </div>
       </div>
     </div>

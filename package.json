@@ -2,7 +2,7 @@
   "name": "anywherecoding",
   "version": "0.3.0",
   "private": true,
-  "description": "Mobile-friendly web control for Codex, Claude Code, PI-Desktop, Pi CLI and BotsTeam sessions",
+  "description": "Mobile-friendly web control for Codex, Claude Code, PI-Desktop and Pi CLI sessions",
   "type": "module",
   "packageManager": "pnpm@10.28.2",
   "repository": { "type": "git", "url": "https://github.com/chilin11/anywherecoding.git" },

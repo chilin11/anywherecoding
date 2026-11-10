@@ -1,5 +1,9 @@
 # Changelog
 
+## 未发布
+
+- 移除 BotsTeam 连接支持；旧连接项会在加载时忽略，不会主动删除原始配置、独立应用或其数据。旧 `config.json` 中的 `botsteam` 配置和 `botsteam-targets.json` 不再使用，可由用户自行删除。
+
 ## Unreleased
 
 ## v0.2.5
